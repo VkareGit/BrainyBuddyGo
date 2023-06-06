@@ -26,3 +26,5 @@ go.work
 .env
 
 QuestionHandler/Data/
+
+pkg/openaiclient/context/config/

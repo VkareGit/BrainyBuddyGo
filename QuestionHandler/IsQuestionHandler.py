@@ -5,9 +5,9 @@ from langdetect import detect
 
 app = Flask(__name__)
 
-classifier = joblib.load('QuestionHandler/Data/classifier.joblib')
-vectorizer = joblib.load('QuestionHandler/Data/vectorizer.joblib')
-svd = joblib.load('QuestionHandler/Data/svd.joblib')
+classifier = joblib.load('Data/classifier.joblib')
+vectorizer = joblib.load('Data/vectorizer.joblib')
+svd = joblib.load('Data/svd.joblib')
 
 q_elements = ["who", "what", "when", "where", "why", "how", "?"]
 q_starters = ["which", "won't", "can't", "isn't",
@@ -123,4 +123,4 @@ def is_question():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)
+    app.run(host='0.0.0.0', port=8080,threaded=True)

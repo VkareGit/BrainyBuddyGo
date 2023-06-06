@@ -19,12 +19,10 @@ import (
 )
 
 const (
-	DefaultMaxTokens     = 200
-	DefaultN             = 1
-	DefaultTemperature   = 0.8
-	DefaultPromptFile    = "pkg/openaiclient/context/config/prompt.txt"
-	DefaultEmbeddingFile = "pkg/openaiclient/context/config/embeddings.json"
-	SimilarityTreshold   = 0.72
+	DefaultMaxTokens   = 200
+	DefaultN           = 1
+	DefaultTemperature = 0.8
+	DefaultPromptFile  = "pkg/openaiclient/context/config/prompt.txt"
 )
 
 type IsQuestionJob struct {
@@ -158,7 +156,7 @@ func (client *OpenAiContext) callIsQuestionAPI(input string) (bool, error) {
 	}
 	jsonValue, _ := json.Marshal(jsonData)
 
-	response, err := http.Post("http://127.0.0.1:8080/is_question", "application/json", bytes.NewBuffer(jsonValue))
+	response, err := http.Post("http://164.90.187.110:8080", "application/json", bytes.NewBuffer(jsonValue))
 
 	if err != nil {
 		log.Printf("The HTTP request failed with error %s\n", err)
