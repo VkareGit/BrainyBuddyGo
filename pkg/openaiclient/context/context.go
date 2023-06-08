@@ -1,17 +1,13 @@
 package context
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	backoff "github.com/cenkalti/backoff/v4"
@@ -25,20 +21,12 @@ const (
 	DefaultPromptFile  = "pkg/openaiclient/context/config/prompt.txt"
 )
 
-type IsQuestionJob struct {
-	input  string
-	result chan bool
-}
-
 type OpenAiContext struct {
-	APIKey             string
-	Prompt             string
-	Client             *openai.Client
-	workers            int
-	sem                chan struct{}
-	isQuestionJobQueue chan IsQuestionJob
-	stop               chan bool
-	mutex              sync.Mutex
+	APIKey  string
+	Prompt  string
+	Client  *openai.Client
+	workers int
+	sem     chan struct{}
 }
 
 func Initialize(apiKey string, workers int) (*OpenAiContext, error) {
@@ -61,16 +49,12 @@ func Initialize(apiKey string, workers int) (*OpenAiContext, error) {
 	}
 
 	client := &OpenAiContext{
-		APIKey:             apiKey,
-		Prompt:             string(prompt),
-		Client:             openai.NewClient(apiKey),
-		workers:            workers,
-		sem:                make(chan struct{}, workers),
-		isQuestionJobQueue: make(chan IsQuestionJob, workers),
-		stop:               make(chan bool, 1),
+		APIKey:  apiKey,
+		Prompt:  string(prompt),
+		Client:  openai.NewClient(apiKey),
+		workers: workers,
+		sem:     make(chan struct{}, workers),
 	}
-
-	go client.processIsQuestionJobs()
 
 	return client, nil
 }
@@ -131,60 +115,6 @@ func (client *OpenAiContext) GenerateResponse(input string, authorUsername strin
 	}
 }
 
-func (client *OpenAiContext) processIsQuestionJobs() {
-	for {
-		select {
-		case job := <-client.isQuestionJobQueue:
-			client.mutex.Lock()
-			isQuestion, err := client.callIsQuestionAPI(job.input)
-			client.mutex.Unlock()
-			if err != nil {
-				log.Printf("Failed to check if %s is a question: %v", job.input, err)
-				job.result <- false
-				continue
-			}
-			job.result <- isQuestion
-		case <-client.stop:
-			return
-		}
-	}
-}
-
-func (client *OpenAiContext) callIsQuestionAPI(input string) (bool, error) {
-	jsonData := map[string]string{
-		"sentence": input,
-	}
-	jsonValue, _ := json.Marshal(jsonData)
-
-	response, err := http.Post("http://164.90.187.110:8080", "application/json", bytes.NewBuffer(jsonValue))
-
-	if err != nil {
-		log.Printf("The HTTP request failed with error %s\n", err)
-		return false, err
-	}
-
-	data, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return false, err
-	}
-
-	var result map[string]bool
-	err = json.Unmarshal([]byte(data), &result)
-	if err != nil {
-		return false, err
-	}
-
-	return result["is_question"], nil
-}
-
-func (client *OpenAiContext) IsQuestionAPI(input string) (bool, error) {
-	result := make(chan bool)
-	client.isQuestionJobQueue <- IsQuestionJob{input: input, result: result}
-	return <-result, nil
-}
-
 func (client *OpenAiContext) Close() {
-	close(client.stop)
 	close(client.sem)
-	close(client.isQuestionJobQueue)
 }

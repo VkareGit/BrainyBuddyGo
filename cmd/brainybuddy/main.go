@@ -7,17 +7,20 @@ import (
 	"syscall"
 
 	config "BrainyBuddyGo/Config"
+	isQuestionContext "BrainyBuddyGo/pkg/apiclient/context"
 	DiscordContext_ "BrainyBuddyGo/pkg/discordclient/context"
 	OpenAiConext_ "BrainyBuddyGo/pkg/openaiclient/context"
 )
 
 const (
-	OpenAiThreadsNumber = 5
+	OpenAiThreadsNumber     = 5
+	IsQuestionThreadsNumber = 5
 )
 
 type Bot struct {
-	discordContext *DiscordContext_.DiscordContext
-	openAiContext  *OpenAiConext_.OpenAiContext
+	discordContext    *DiscordContext_.DiscordContext
+	openAiContext     *OpenAiConext_.OpenAiContext
+	ISQuestionContext *isQuestionContext.IsQuestionContext
 }
 
 func NewBot(cfg *config.Configuration) (*Bot, error) {
@@ -27,7 +30,13 @@ func NewBot(cfg *config.Configuration) (*Bot, error) {
 		return nil, err
 	}
 
-	dc, err := DiscordContext_.Initialize(cfg.DiscordToken, oa)
+	isq, err := isQuestionContext.Initialize(IsQuestionThreadsNumber)
+	if err != nil {
+		log.Printf("Failed to initialize OpenAi context: %v", err)
+		return nil, err
+	}
+
+	dc, err := DiscordContext_.Initialize(cfg.DiscordToken, oa, isq)
 	if err != nil {
 		log.Printf("Failed to initialize Discord context: %v", err)
 		return nil, err

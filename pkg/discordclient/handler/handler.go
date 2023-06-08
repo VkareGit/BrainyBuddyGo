@@ -3,17 +3,22 @@ package handler
 import (
 	"log"
 
+	isQuestionContext "BrainyBuddyGo/pkg/apiclient/context"
 	aiContext "BrainyBuddyGo/pkg/openaiclient/context"
 
 	"github.com/bwmarrin/discordgo"
 )
 
 type Handler struct {
-	AIContext *aiContext.OpenAiContext
+	AIContext         *aiContext.OpenAiContext
+	ISQuestionContext *isQuestionContext.IsQuestionContext
 }
 
-func NewHandler(context *aiContext.OpenAiContext) *Handler {
-	return &Handler{AIContext: context}
+func NewHandler(aiContext *aiContext.OpenAiContext, isQuestionContext *isQuestionContext.IsQuestionContext) *Handler {
+	return &Handler{
+		AIContext:         aiContext,
+		ISQuestionContext: isQuestionContext,
+	}
 }
 
 func Ready(s *discordgo.Session, event *discordgo.Ready) {
@@ -34,7 +39,7 @@ func (h *Handler) MessageCreateHandler(s *discordgo.Session, m *discordgo.Messag
 		log.Println("AIContext is not initialized")
 		return
 	}
-	isQuestion, err := h.AIContext.IsQuestionAPI(m.Content)
+	isQuestion, err := h.ISQuestionContext.IsQuestion(m.Content)
 	if err != nil {
 		log.Printf("Filed to check if input is a question: %v", err)
 	}
