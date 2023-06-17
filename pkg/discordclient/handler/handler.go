@@ -3,21 +3,28 @@ package handler
 import (
 	"log"
 
-	isQuestionContext "BrainyBuddyGo/pkg/apiclient/context"
 	aiContext "BrainyBuddyGo/pkg/openaiclient/context"
 
 	"github.com/bwmarrin/discordgo"
 )
 
-type Handler struct {
-	AIContext         *aiContext.OpenAiContext
-	ISQuestionContext *isQuestionContext.IsQuestionContext
+const (
+	ModerateQuestionMaxRetries = 3
+	UnableToAssistMsg          = "I'm sorry, but I'm not able to assist at this time."
+	CantAnswerNowMsg           = "Sorry, I can't answer that question right now."
+)
+
+var allowedChannels = []string{
+	"1114708430859550771",
 }
 
-func NewHandler(aiContext *aiContext.OpenAiContext, isQuestionContext *isQuestionContext.IsQuestionContext) *Handler {
+type Handler struct {
+	AIContext *aiContext.OpenAiContext
+}
+
+func NewHandler(aiContext *aiContext.OpenAiContext) *Handler {
 	return &Handler{
-		AIContext:         aiContext,
-		ISQuestionContext: isQuestionContext,
+		AIContext: aiContext,
 	}
 }
 
@@ -28,8 +35,21 @@ func Ready(s *discordgo.Session, event *discordgo.Ready) {
 	}
 }
 
+func isAllowedChannel(channelID string) bool {
+	for _, id := range allowedChannels {
+		if channelID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Handler) MessageCreateHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if m.Author.ID == s.State.User.ID {
+		return
+	}
+
+	if !isAllowedChannel(m.ChannelID) {
 		return
 	}
 
@@ -39,13 +59,9 @@ func (h *Handler) MessageCreateHandler(s *discordgo.Session, m *discordgo.Messag
 		log.Println("AIContext is not initialized")
 		return
 	}
-	isQuestion, err := h.ISQuestionContext.IsQuestion(m.Content)
-	if err != nil {
-		log.Printf("Filed to check if input is a question: %v", err)
-	}
-	if isQuestion {
-		log.Printf("Question: %s accepted", m.Content)
-		response := h.GenerateAIResponse(m.Content, m.Author.Username)
+
+	response := h.GenerateAIResponse(m.Content, m.Author.Username)
+	if response != "" {
 		if _, err := s.ChannelMessageSendReply(m.ChannelID, response, m.Reference()); err != nil {
 			log.Printf("Failed to send message: %v", err)
 		}
@@ -55,12 +71,24 @@ func (h *Handler) MessageCreateHandler(s *discordgo.Session, m *discordgo.Messag
 func (h *Handler) GenerateAIResponse(question string, authorUsername string) string {
 	if h.AIContext == nil {
 		log.Println("AIContext is not initialized")
-		return "I'm sorry, but I'm not able to assist at this time."
+		return UnableToAssistMsg
 	}
+
+	ModerateQuestion, err := h.AIContext.ModerationCheck(question, authorUsername, ModerateQuestionMaxRetries)
+
+	if err != nil {
+		log.Printf("Failed to moderate question from %s : %v", authorUsername, err)
+		return CantAnswerNowMsg
+	}
+
+	if ModerateQuestion {
+		return UnableToAssistMsg
+	}
+
 	response, err := h.AIContext.GenerateResponse(question, authorUsername)
 	if err != nil {
-		log.Printf("Failed to generate response: %v", err)
-		return "Sorry, I can't answer that question right now."
+		log.Printf("Failed to generate response for question from %s: %v", authorUsername, err)
+		return CantAnswerNowMsg
 	}
 	return response
 }

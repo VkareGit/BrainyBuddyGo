@@ -75,7 +75,7 @@ func (client *OpenAiContext) GenerateResponse(input string, authorUsername strin
 	systemMessage := fmt.Sprintf(client.Prompt, authorUsername)
 
 	req := openai.ChatCompletionRequest{
-		Model: openai.GPT3Dot5Turbo,
+		Model: openai.GPT3Dot5Turbo16K,
 		Messages: []openai.ChatCompletionMessage{
 			{
 				Role:    openai.ChatMessageRoleAssistant,
@@ -112,6 +112,64 @@ func (client *OpenAiContext) GenerateResponse(input string, authorUsername strin
 		}
 
 		return resp.Choices[0].Message.Content, nil
+	}
+}
+
+func (client *OpenAiContext) ModerationCheck(input string, authorUsername string, maxRetries int) (bool, error) {
+	log.Printf("Checking input: %s from user %s", input, authorUsername)
+
+	if client.Client == nil {
+		err := errors.New("OpenAI client failed to initialize. Please check your configuration settings")
+		log.Println(err)
+		return false, err
+	}
+
+	if strings.TrimSpace(input) == "" {
+		err := errors.New("the input is empty. Please provide a valid string")
+		log.Println(err)
+		return false, err
+	}
+
+	ctx := context.Background()
+
+	req := openai.ModerationRequest{
+		Model: openai.ModerationTextLatest,
+		Input: input,
+	}
+
+	bo := backoff.NewExponentialBackOff()
+	retryCount := 0
+
+	for {
+		if retryCount >= maxRetries {
+			err := errors.New("failed to moderate text after maximum retries")
+			log.Println(err)
+			return false, err
+		}
+
+		client.sem <- struct{}{}
+		resp, err := client.Client.Moderations(ctx, req)
+		<-client.sem
+
+		if err != nil {
+			nextInterval := bo.NextBackOff()
+			if nextInterval != backoff.Stop {
+				log.Printf("Moderation error: %v, retrying in %v...", err, nextInterval)
+				time.Sleep(nextInterval)
+				retryCount++
+				continue
+			}
+			log.Printf("Failed to moderate text: %v", err)
+			return false, err
+		}
+
+		if len(resp.Results) == 0 {
+			err := errors.New("no choices were returned in the moderation response")
+			log.Println(err)
+			return false, err
+		}
+
+		return resp.Results[0].Flagged, nil
 	}
 }
 

@@ -1,50 +1,39 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
 	config "BrainyBuddyGo/Config"
-	isQuestionContext "BrainyBuddyGo/pkg/apiclient/context"
 	DiscordContext_ "BrainyBuddyGo/pkg/discordclient/context"
 	OpenAiConext_ "BrainyBuddyGo/pkg/openaiclient/context"
 )
 
 const (
-	OpenAiThreadsNumber     = 5
-	IsQuestionThreadsNumber = 5
+	OpenAiThreadsNumber = 5
 )
 
 type Bot struct {
-	discordContext    *DiscordContext_.DiscordContext
-	openAiContext     *OpenAiConext_.OpenAiContext
-	ISQuestionContext *isQuestionContext.IsQuestionContext
+	discordContext *DiscordContext_.DiscordContext
+	openAiContext  *OpenAiConext_.OpenAiContext
 }
 
 func NewBot(cfg *config.Configuration) (*Bot, error) {
 	oa, err := OpenAiConext_.Initialize(cfg.OpenAiToken, OpenAiThreadsNumber)
 	if err != nil {
-		log.Printf("Failed to initialize OpenAi context: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to initialize OpenAi context: %w", err)
 	}
 
-	isq, err := isQuestionContext.Initialize(IsQuestionThreadsNumber)
+	dc, err := DiscordContext_.Initialize(cfg.DiscordToken, oa)
 	if err != nil {
-		log.Printf("Failed to initialize OpenAi context: %v", err)
-		return nil, err
-	}
-
-	dc, err := DiscordContext_.Initialize(cfg.DiscordToken, oa, isq)
-	if err != nil {
-		log.Printf("Failed to initialize Discord context: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to initialize Discord context: %w", err)
 	}
 
 	if err := dc.OpenConnection(); err != nil {
-		log.Printf("Failed to open connection: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to open connection: %w", err)
 	}
 
 	return &Bot{

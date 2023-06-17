@@ -1,8 +1,0 @@
-pandas
-scikit-learn
-imbalanced-learn
-joblib
-nltk
-datasets
-numpy
-flask

@@ -6,7 +6,7 @@ require (
 	github.com/bwmarrin/discordgo v0.27.1
 	github.com/cenkalti/backoff/v4 v4.2.1
 	github.com/joho/godotenv v1.5.1
-	github.com/sashabaranov/go-openai v1.9.5
+	github.com/sashabaranov/go-openai v1.11.2
 )
 
 require (
