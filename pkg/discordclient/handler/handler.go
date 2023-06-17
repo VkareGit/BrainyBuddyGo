@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"log"
 
 	aiContext "BrainyBuddyGo/pkg/openaiclient/context"
@@ -56,39 +57,41 @@ func (h *Handler) MessageCreateHandler(s *discordgo.Session, m *discordgo.Messag
 	log.Printf("Message from %s saying %s in channel %s", m.Author.Username, m.Content, m.ChannelID)
 
 	if h.AIContext == nil {
-		log.Println("AIContext is not initialized")
+		log.Println(aiContext.ErrUninitOpenAI)
 		return
 	}
 
-	response := h.GenerateAIResponse(m.Content, m.Author.Username)
-	if response != "" {
-		if _, err := s.ChannelMessageSendReply(m.ChannelID, response, m.Reference()); err != nil {
-			log.Printf("Failed to send message: %v", err)
-		}
+	response, err := h.GenerateAIResponse(m.Content, m.Author.Username)
+	if err != nil {
+		log.Printf("Failed to generate response: %v", err)
+		//s.ChannelMessageSendReply(m.ChannelID, response, m.Reference()) -> TODO uncomment if needed (not sure if its good to send this message)
+		return
+	}
+
+	if _, err := s.ChannelMessageSendReply(m.ChannelID, response, m.Reference()); err != nil {
+		log.Printf("Failed to send message: %v", err)
 	}
 }
 
-func (h *Handler) GenerateAIResponse(question string, authorUsername string) string {
+func (h *Handler) GenerateAIResponse(question string, authorUsername string) (string, error) {
 	if h.AIContext == nil {
-		log.Println("AIContext is not initialized")
-		return UnableToAssistMsg
+		return UnableToAssistMsg, fmt.Errorf(aiContext.ErrUninitOpenAI)
 	}
 
-	ModerateQuestion, err := h.AIContext.ModerationCheck(question, authorUsername, ModerateQuestionMaxRetries)
-
+	flagged, err := h.AIContext.ModerationCheck(question, ModerateQuestionMaxRetries)
 	if err != nil {
 		log.Printf("Failed to moderate question from %s : %v", authorUsername, err)
-		return CantAnswerNowMsg
+		return CantAnswerNowMsg, err
 	}
 
-	if ModerateQuestion {
-		return UnableToAssistMsg
+	if flagged {
+		return UnableToAssistMsg, nil
 	}
 
 	response, err := h.AIContext.GenerateResponse(question, authorUsername)
 	if err != nil {
 		log.Printf("Failed to generate response for question from %s: %v", authorUsername, err)
-		return CantAnswerNowMsg
+		return CantAnswerNowMsg, err
 	}
-	return response
+	return response, nil
 }

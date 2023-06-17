@@ -2,7 +2,6 @@ package context
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -11,6 +10,8 @@ import (
 	"time"
 
 	backoff "github.com/cenkalti/backoff/v4"
+	"github.com/chrisport/go-lang-detector/langdet"
+	"github.com/chrisport/go-lang-detector/langdet/langdetdef"
 	openai "github.com/sashabaranov/go-openai"
 )
 
@@ -19,6 +20,19 @@ const (
 	DefaultN           = 1
 	DefaultTemperature = 0.8
 	DefaultPromptFile  = "pkg/openaiclient/context/config/prompt.txt"
+	GenerateResponse   = "Generating AI response for question: '%s', asked by user: '%s'"
+	// Error messages
+	ErrEmptyAPIKey        = "OpenAi API Key is empty"
+	ErrFailedPromptPath   = "failed to get absolute path for prompt file: %w"
+	ErrFailedPromptRead   = "failed to read prompt file: %w"
+	ErrEmptyInput         = "input is empty"
+	ErrUninitOpenAI       = "OpenAI client is not initialized"
+	ErrFailedChatComplete = "Failed to create chat completion: "
+	ErrNoChoicesResponse  = "no choices in response"
+	ErrNonEnglishInput    = "input is not in English"
+	ErrFailedModeration   = "failed to moderate text: "
+	ErrNoModResults       = "no choices were returned in the moderation response"
+	ErrMaxRetries         = "failed to moderate text after maximum retries"
 )
 
 type OpenAiContext struct {
@@ -29,52 +43,69 @@ type OpenAiContext struct {
 	sem     chan struct{}
 }
 
-func Initialize(apiKey string, workers int) (*OpenAiContext, error) {
+func NewOpenAiContext(apiKey string, workers int) (*OpenAiContext, error) {
 	if apiKey == "" {
-		return nil, errors.New("OpenAi API Key is empty")
+		return nil, fmt.Errorf(ErrEmptyAPIKey)
 	}
 
-	if workers <= 0 {
-		workers = 1
-	}
-
-	promptPath, err := filepath.Abs(DefaultPromptFile)
+	prompt, err := getPrompt()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute path for prompt file: %w", err)
-	}
-
-	prompt, err := ioutil.ReadFile(promptPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read prompt file: %w", err)
+		return nil, err
 	}
 
 	client := &OpenAiContext{
 		APIKey:  apiKey,
-		Prompt:  string(prompt),
+		Prompt:  prompt,
 		Client:  openai.NewClient(apiKey),
-		workers: workers,
+		workers: getWorkerCount(workers),
 		sem:     make(chan struct{}, workers),
 	}
 
 	return client, nil
 }
 
+func getWorkerCount(workers int) int {
+	if workers <= 0 {
+		return 1
+	}
+	return workers
+}
+
+func getPrompt() (string, error) {
+	promptPath, err := filepath.Abs(DefaultPromptFile)
+	if err != nil {
+		return "", fmt.Errorf(ErrFailedPromptPath, err)
+	}
+
+	prompt, err := ioutil.ReadFile(promptPath)
+	if err != nil {
+		return "", fmt.Errorf(ErrFailedPromptRead, err)
+	}
+
+	return string(prompt), nil
+}
+
 func (client *OpenAiContext) GenerateResponse(input string, authorUsername string) (string, error) {
-	log.Printf("Generating response for question: %s from user %s", input, authorUsername)
+	log.Printf(GenerateResponse, input, authorUsername)
 	if client.Client == nil {
-		log.Println("OpenAI client is not initialized")
-		return "", errors.New("OpenAI client is not initialized")
+		return "", fmt.Errorf(ErrUninitOpenAI)
 	}
 
 	if strings.TrimSpace(input) == "" {
-		return "", errors.New("input is empty")
+		return "", fmt.Errorf(ErrEmptyInput)
 	}
 
 	ctx := context.Background()
 
 	systemMessage := fmt.Sprintf(client.Prompt, authorUsername)
 
-	req := openai.ChatCompletionRequest{
+	req := client.createChatCompletionRequest(systemMessage, input)
+
+	return client.performChatCompletion(ctx, req)
+}
+
+func (client *OpenAiContext) createChatCompletionRequest(systemMessage string, input string) openai.ChatCompletionRequest {
+	return openai.ChatCompletionRequest{
 		Model: openai.GPT3Dot5Turbo16K,
 		Messages: []openai.ChatCompletionMessage{
 			{
@@ -90,7 +121,9 @@ func (client *OpenAiContext) GenerateResponse(input string, authorUsername strin
 		N:           DefaultN,
 		Temperature: DefaultTemperature,
 	}
+}
 
+func (client *OpenAiContext) performChatCompletion(ctx context.Context, req openai.ChatCompletionRequest) (string, error) {
 	bo := backoff.NewExponentialBackOff()
 	for {
 		client.sem <- struct{}{}
@@ -103,48 +136,63 @@ func (client *OpenAiContext) GenerateResponse(input string, authorUsername strin
 				time.Sleep(nextInterval)
 				continue
 			}
-			log.Println("Failed to create chat completion: ", err)
-			return "", err
+			return "", fmt.Errorf("%s %v", ErrFailedChatComplete, err)
 		}
 
 		if len(resp.Choices) == 0 {
-			return "", errors.New("no choices in response")
+			return "", fmt.Errorf(ErrNoChoicesResponse)
 		}
 
 		return resp.Choices[0].Message.Content, nil
 	}
 }
 
-func (client *OpenAiContext) ModerationCheck(input string, authorUsername string, maxRetries int) (bool, error) {
-	log.Printf("Checking input: %s from user %s", input, authorUsername)
+func checkLanguage(input string) error {
+	detector := langdet.NewDetector()
+	detector.AddLanguageComparators(langdetdef.ENGLISH)
 
+	detectedLanguage := detector.GetClosestLanguage(input)
+	if detectedLanguage != "english" {
+		return fmt.Errorf("%s, detected language is: %s", ErrNonEnglishInput, detectedLanguage)
+	}
+
+	return nil
+}
+
+func (client *OpenAiContext) ModerationCheck(input string, maxRetries int) (bool, error) {
 	if client.Client == nil {
-		err := errors.New("OpenAI client failed to initialize. Please check your configuration settings")
-		log.Println(err)
-		return false, err
+		return false, fmt.Errorf(ErrUninitOpenAI)
 	}
 
 	if strings.TrimSpace(input) == "" {
-		err := errors.New("the input is empty. Please provide a valid string")
-		log.Println(err)
+		return false, fmt.Errorf(ErrEmptyInput)
+	}
+
+	if err := checkLanguage(input); err != nil {
 		return false, err
 	}
 
 	ctx := context.Background()
 
-	req := openai.ModerationRequest{
+	req := client.createModerationRequest(input)
+
+	return client.performModeration(ctx, req, maxRetries)
+}
+
+func (client *OpenAiContext) createModerationRequest(input string) openai.ModerationRequest {
+	return openai.ModerationRequest{
 		Model: openai.ModerationTextLatest,
 		Input: input,
 	}
+}
 
+func (client *OpenAiContext) performModeration(ctx context.Context, req openai.ModerationRequest, maxRetries int) (bool, error) {
 	bo := backoff.NewExponentialBackOff()
 	retryCount := 0
 
 	for {
 		if retryCount >= maxRetries {
-			err := errors.New("failed to moderate text after maximum retries")
-			log.Println(err)
-			return false, err
+			return false, fmt.Errorf(ErrMaxRetries)
 		}
 
 		client.sem <- struct{}{}
@@ -154,19 +202,14 @@ func (client *OpenAiContext) ModerationCheck(input string, authorUsername string
 		if err != nil {
 			nextInterval := bo.NextBackOff()
 			if nextInterval != backoff.Stop {
-				log.Printf("Moderation error: %v, retrying in %v...", err, nextInterval)
-				time.Sleep(nextInterval)
 				retryCount++
 				continue
 			}
-			log.Printf("Failed to moderate text: %v", err)
-			return false, err
+			return false, fmt.Errorf("%s %v", ErrFailedModeration, err)
 		}
 
 		if len(resp.Results) == 0 {
-			err := errors.New("no choices were returned in the moderation response")
-			log.Println(err)
-			return false, err
+			return false, fmt.Errorf(ErrNoModResults)
 		}
 
 		return resp.Results[0].Flagged, nil
