@@ -2,11 +2,13 @@ package context
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	backoff "github.com/cenkalti/backoff/v4"
@@ -19,6 +21,9 @@ const (
 	DefaultMaxTokens   = 200
 	DefaultN           = 1
 	DefaultTemperature = 0.8
+	maxRetries         = 3
+	cacheLifeTime      = 24 * time.Hour
+	N                  = 4
 	DefaultPromptFile  = "pkg/openaiclient/context/config/prompt.txt"
 	GenerateResponse   = "Generating AI response for question: '%s', asked by user: '%s'"
 	// Error messages
@@ -35,12 +40,23 @@ const (
 	ErrMaxRetries         = "failed to moderate text after maximum retries"
 )
 
+type CacheItem struct {
+	Conversation []openai.ChatCompletionMessage
+	Timestamp    time.Time
+}
+
 type OpenAiContext struct {
 	APIKey  string
 	Prompt  string
 	Client  *openai.Client
 	workers int
 	sem     chan struct{}
+
+	generationCache map[string]CacheItem
+
+	generationCacheMu sync.RWMutex
+
+	cacheLifeTime time.Duration
 }
 
 func NewOpenAiContext(apiKey string, workers int) (*OpenAiContext, error) {
@@ -54,12 +70,16 @@ func NewOpenAiContext(apiKey string, workers int) (*OpenAiContext, error) {
 	}
 
 	client := &OpenAiContext{
-		APIKey:  apiKey,
-		Prompt:  prompt,
-		Client:  openai.NewClient(apiKey),
-		workers: getWorkerCount(workers),
-		sem:     make(chan struct{}, workers),
+		APIKey:          apiKey,
+		Prompt:          prompt,
+		Client:          openai.NewClient(apiKey),
+		workers:         getWorkerCount(workers),
+		sem:             make(chan struct{}, workers),
+		cacheLifeTime:   cacheLifeTime,
+		generationCache: make(map[string]CacheItem),
 	}
+
+	go client.RunCacheEviction()
 
 	return client, nil
 }
@@ -95,55 +115,137 @@ func (client *OpenAiContext) GenerateResponse(input string, authorUsername strin
 		return "", fmt.Errorf(ErrEmptyInput)
 	}
 
-	ctx := context.Background()
+	cacheKey := authorUsername
+	client.generationCacheMu.RLock()
+	cacheItem, ok := client.generationCache[cacheKey]
+	client.generationCacheMu.RUnlock()
+
+	var conversation []openai.ChatCompletionMessage
 
 	systemMessage := fmt.Sprintf(client.Prompt, authorUsername)
+	systemMessageExists := false
 
-	req := client.createChatCompletionRequest(systemMessage, input)
+	if ok {
+		conversation = append(conversation, cacheItem.Conversation...)
+		for _, message := range cacheItem.Conversation {
+			if message.Role == openai.ChatMessageRoleAssistant && message.Content == systemMessage {
+				systemMessageExists = true
+				break
+			}
+		}
+	}
 
-	return client.performChatCompletion(ctx, req)
+	if !systemMessageExists {
+		conversation = append(conversation, openai.ChatCompletionMessage{
+			Role:    openai.ChatMessageRoleAssistant,
+			Content: systemMessage,
+		})
+	}
+
+	conversation = append(conversation, openai.ChatCompletionMessage{
+		Role:    openai.ChatMessageRoleUser,
+		Content: input,
+	})
+
+	if len(conversation) > N {
+		conversation = conversation[len(conversation)-N:]
+	}
+
+	ctx := context.Background()
+
+	req := client.createChatCompletionRequest(conversation)
+
+	response, err := client.performChatCompletion(ctx, req)
+
+	if err != nil {
+		return "", err
+	}
+
+	conversation = append(conversation, openai.ChatCompletionMessage{
+		Role:    openai.ChatMessageRoleAssistant,
+		Content: response,
+	})
+
+	client.generationCacheMu.Lock()
+	client.generationCache[cacheKey] = CacheItem{
+		Conversation: conversation,
+		Timestamp:    time.Now(),
+	}
+	client.generationCacheMu.Unlock()
+
+	return response, nil
 }
 
-func (client *OpenAiContext) createChatCompletionRequest(systemMessage string, input string) openai.ChatCompletionRequest {
+func (client *OpenAiContext) createChatCompletionRequest(conversation []openai.ChatCompletionMessage) openai.ChatCompletionRequest {
 	return openai.ChatCompletionRequest{
-		Model: openai.GPT3Dot5Turbo16K,
-		Messages: []openai.ChatCompletionMessage{
-			{
-				Role:    openai.ChatMessageRoleAssistant,
-				Content: systemMessage,
-			},
-			{
-				Role:    openai.ChatMessageRoleUser,
-				Content: input,
-			},
-		},
+		Model:       openai.GPT3Dot5Turbo16K,
+		Messages:    conversation,
 		MaxTokens:   DefaultMaxTokens,
 		N:           DefaultN,
 		Temperature: DefaultTemperature,
 	}
 }
 
-func (client *OpenAiContext) performChatCompletion(ctx context.Context, req openai.ChatCompletionRequest) (string, error) {
+func retryWithBackoff(performFunc func() (interface{}, error), maxRetries int) (interface{}, error) {
 	bo := backoff.NewExponentialBackOff()
+	retryCount := 0
+	var result interface{}
+	var err error
 	for {
-		client.sem <- struct{}{}
-		resp, err := client.Client.CreateChatCompletion(ctx, req)
-		<-client.sem
-
-		if err != nil {
+		if result, err = performFunc(); err != nil {
+			if retryCount >= maxRetries {
+				return nil, fmt.Errorf("%w after maximum retries", err)
+			}
 			nextInterval := bo.NextBackOff()
 			if nextInterval != backoff.Stop {
+				retryCount++
 				time.Sleep(nextInterval)
 				continue
 			}
+			return nil, err
+		}
+		return result, nil
+	}
+}
+
+func (client *OpenAiContext) performChatCompletion(ctx context.Context, req openai.ChatCompletionRequest) (string, error) {
+	var allResponses strings.Builder
+
+	for {
+		respInterface, err := retryWithBackoff(func() (interface{}, error) {
+			client.sem <- struct{}{}        // Acquire semaphore
+			defer func() { <-client.sem }() // Ensure semaphore release
+			return client.Client.CreateChatCompletion(ctx, req)
+		}, maxRetries)
+		if err != nil {
 			return "", fmt.Errorf("%s %v", ErrFailedChatComplete, err)
 		}
 
-		if len(resp.Choices) == 0 {
+		response, ok := respInterface.(openai.ChatCompletionResponse)
+		if !ok {
+			return "", errors.New("failed to cast to openai.ChatCompletionResponse")
+		}
+
+		if len(response.Choices) == 0 {
 			return "", fmt.Errorf(ErrNoChoicesResponse)
 		}
 
-		return resp.Choices[0].Message.Content, nil
+		responseText := response.Choices[0].Message.Content
+		finishReason := response.Choices[0].FinishReason
+
+		allResponses.WriteString(responseText)
+
+		if finishReason == openai.FinishReasonStop {
+			return allResponses.String(), nil
+		} else {
+			// Otherwise, generate another response
+			req.Messages = append(req.Messages, openai.ChatCompletionMessage{
+				Role:    openai.ChatMessageRoleAssistant,
+				Content: responseText,
+			})
+
+			continue
+		}
 	}
 }
 
@@ -176,7 +278,13 @@ func (client *OpenAiContext) ModerationCheck(input string, maxRetries int) (bool
 
 	req := client.createModerationRequest(input)
 
-	return client.performModeration(ctx, req, maxRetries)
+	result, err := client.performModeration(ctx, req, maxRetries)
+
+	if err != nil {
+		return false, err
+	}
+
+	return result, nil
 }
 
 func (client *OpenAiContext) createModerationRequest(input string) openai.ModerationRequest {
@@ -218,4 +326,19 @@ func (client *OpenAiContext) performModeration(ctx context.Context, req openai.M
 
 func (client *OpenAiContext) Close() {
 	close(client.sem)
+}
+
+func (client *OpenAiContext) RunCacheEviction() {
+	ticker := time.NewTicker(client.cacheLifeTime)
+
+	for {
+		<-ticker.C
+		client.generationCacheMu.Lock()
+		for k, v := range client.generationCache {
+			if time.Since(v.Timestamp) > client.cacheLifeTime {
+				delete(client.generationCache, k)
+			}
+		}
+		client.generationCacheMu.Unlock()
+	}
 }
