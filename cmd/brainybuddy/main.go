@@ -11,6 +11,7 @@ import (
 
 	config "BrainyBuddyGo/Config"
 	discordContext "BrainyBuddyGo/pkg/discordclient/context"
+	"BrainyBuddyGo/pkg/discordclient/limiter"
 	openAiContext "BrainyBuddyGo/pkg/openaiclient/context"
 )
 
@@ -21,6 +22,7 @@ const (
 type Bot struct {
 	discordCtx *discordContext.DiscordContext
 	openAiCtx  *openAiContext.OpenAiContext
+	Limiter    *limiter.MessageLimiter
 }
 
 func NewBot(cfg *config.Configuration, basepath string) (*Bot, error) {
@@ -29,7 +31,14 @@ func NewBot(cfg *config.Configuration, basepath string) (*Bot, error) {
 		return nil, fmt.Errorf("failed to initialize OpenAi context: %w", err)
 	}
 
-	dc, err := discordContext.Initialize(cfg.DiscordToken, oa)
+	lim := limiter.NewMessageLimiter()
+
+	b := &Bot{
+		openAiCtx: oa,
+		Limiter:   lim,
+	}
+
+	dc, err := discordContext.Initialize(cfg.DiscordToken, oa, lim)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Discord context: %w", err)
 	}
@@ -38,10 +47,8 @@ func NewBot(cfg *config.Configuration, basepath string) (*Bot, error) {
 		return nil, fmt.Errorf("failed to open connection: %w", err)
 	}
 
-	return &Bot{
-		discordCtx: dc,
-		openAiCtx:  oa,
-	}, nil
+	b.discordCtx = dc
+	return b, nil
 }
 
 func (b *Bot) Close() error {

@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"log"
+	"time"
 
 	aiContext "BrainyBuddyGo/pkg/openaiclient/context"
 
@@ -19,13 +20,19 @@ var allowedChannels = []string{
 	"1114708430859550771",
 }
 
-type Handler struct {
-	AIContext *aiContext.OpenAiContext
+type MessageLimiter interface {
+	RegisterMessage(userID string) (bool, time.Duration)
 }
 
-func NewHandler(aiContext *aiContext.OpenAiContext) *Handler {
+type Handler struct {
+	AIContext *aiContext.OpenAiContext
+	Limiter   MessageLimiter
+}
+
+func NewHandler(aiContext *aiContext.OpenAiContext, limiter MessageLimiter) *Handler {
 	return &Handler{
 		AIContext: aiContext,
+		Limiter:   limiter,
 	}
 }
 
@@ -64,7 +71,6 @@ func (h *Handler) MessageCreateHandler(s *discordgo.Session, m *discordgo.Messag
 	response, err := h.GenerateAIResponse(m.Content, m.Author.Username)
 	if err != nil {
 		log.Printf("Failed to generate response: %v", err)
-		//s.ChannelMessageSendReply(m.ChannelID, response, m.Reference()) -> TODO uncomment if needed (not sure if its good to send this message)
 		return
 	}
 
@@ -76,6 +82,11 @@ func (h *Handler) MessageCreateHandler(s *discordgo.Session, m *discordgo.Messag
 func (h *Handler) GenerateAIResponse(question string, authorUsername string) (string, error) {
 	if h.AIContext == nil {
 		return UnableToAssistMsg, fmt.Errorf(aiContext.ErrUninitOpenAI.Error())
+	}
+
+	ok, timeLeft := h.Limiter.RegisterMessage(authorUsername)
+	if !ok {
+		return fmt.Sprintf("Sorry, you can ask another question in %.0f minutes", timeLeft.Minutes()), nil
 	}
 
 	flagged, err := h.AIContext.ModerationCheck(question, ModerateQuestionMaxRetries)
