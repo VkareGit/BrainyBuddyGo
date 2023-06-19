@@ -2,6 +2,7 @@ package context
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -24,7 +25,7 @@ const (
 	maxRetries            = 3
 	cacheLifeTime         = 24 * time.Hour
 	ConversationCacheSize = 2
-	DefaultPromptFile     = "pkg/openaiclient/context/config/prompt.txt"
+	DefaultPromptFile     = "pkg/openaiclient/context/config/prompt.json"
 	GenerateResponse      = "Generating AI response for question: '%s', asked by user: '%s'"
 )
 
@@ -39,6 +40,32 @@ var (
 	ErrMaxRetries         = errors.New("failed to moderate text after maximum retries")
 	ErrEmptyInput         = errors.New("input is empty")
 )
+
+type TeamAdvisorConfig struct {
+	Welcome               []string `json:"welcome"`
+	AppInterface          []string `json:"app_interface"`
+	AppSettings           []string `json:"app_settings"`
+	BanningPhase          []string `json:"banning_phase"`
+	PickingPhase          []string `json:"picking_phase"`
+	ExampleQuestion       []string `json:"example_question"`
+	QuickSettingsFeatures []string `json:"quick_settings_features"`
+	AppSettingsDetails    []string `json:"app_settings_details"`
+	BanningPhaseDetails   []string `json:"banning_phase_details"`
+	PickingPhaseDetails   []string `json:"picking_phase_details"`
+	TimeoutHandling       []string `json:"timeout_handling"`
+}
+
+type TeamAdvisorData struct {
+	TeamAdvisorConfig `json:"team-advisor"`
+}
+
+type NormalPromptConfig struct {
+	Welcome []string `json:"welcome"`
+}
+
+type NormalPromptData struct {
+	NormalPromptConfig `json:"normal"`
+}
 
 type CacheItem struct {
 	Conversation []openai.ChatCompletionMessage
@@ -68,14 +95,14 @@ type OpenAiContext struct {
 	generationCache sync.Map
 }
 
-func NewOpenAiContext(apiKey string, workers int, basepath string) (*OpenAiContext, error) {
+func NewOpenAiContext(apiKey string, workers int, basepath string, production bool) (*OpenAiContext, error) {
 	if apiKey == "" {
 		return nil, ErrEmptyAPIKey
 	}
 
 	client := openai.NewClient(apiKey)
 
-	prompt, err := getPrompt(basepath)
+	prompt, err := getPrompt(basepath, production)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get prompt: %w", err)
 	}
@@ -111,15 +138,41 @@ func getWorkerCount(workers int) int {
 	return workers
 }
 
-func getPrompt(basepath string) (string, error) {
+func getPrompt(basepath string, production bool) (string, error) {
 	filepath := filepath.Join(basepath, DefaultPromptFile)
 
-	prompt, err := ioutil.ReadFile(filepath)
+	promptBytes, err := ioutil.ReadFile(filepath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read prompt file: %w", err)
 	}
 
-	return string(prompt), nil
+	var allPrompts []string
+
+	if !production {
+		var config NormalPromptData
+		err = json.Unmarshal(promptBytes, &config)
+		if err != nil {
+			return "", fmt.Errorf("failed to decode config file: %w", err)
+		}
+		allPrompts = append(allPrompts, strings.Join(config.Welcome, " "))
+	} else {
+		var config map[string]map[string][]string
+		err = json.Unmarshal(promptBytes, &config)
+		if err != nil {
+			return "", fmt.Errorf("failed to decode config file: %w", err)
+		}
+
+		teamAdvisorConfig, ok := config["team-advisor"]
+		if !ok {
+			return "", fmt.Errorf("team-advisor config not found")
+		}
+
+		for _, prompts := range teamAdvisorConfig {
+			allPrompts = append(allPrompts, strings.Join(prompts, " "))
+		}
+	}
+
+	return strings.Join(allPrompts, " "), nil
 }
 
 func (client *OpenAiContext) AddItemToCache(key interface{}, value UserCacheItem) {

@@ -26,7 +26,7 @@ type Bot struct {
 }
 
 func NewBot(cfg *config.Configuration, basepath string) (*Bot, error) {
-	oa, err := openAiContext.NewOpenAiContext(cfg.OpenAiToken, OpenAiThreadsNumber, basepath)
+	oa, err := openAiContext.NewOpenAiContext(cfg.OpenAiToken, OpenAiThreadsNumber, basepath, cfg.Production)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize OpenAi context: %w", err)
 	}

@@ -1,7 +1,7 @@
 package config
 
 import (
-	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -11,27 +11,43 @@ import (
 type Configuration struct {
 	DiscordToken string
 	OpenAiToken  string
+	Production   bool
 }
 
 func Load(basepath string) (*Configuration, error) {
 	err := godotenv.Load(filepath.Join(basepath, ".env"))
 
 	if err != nil {
-		return nil, errors.New("Error loading .env file: " + err.Error())
+		return nil, fmt.Errorf("Error loading .env file: %w", err)
 	}
 
-	discordToken := os.Getenv("DISCORD_BOT_TOKEN")
-	if discordToken == "" {
-		return nil, errors.New("DISCORD_BOT_TOKEN not set")
+	discordToken, err := getEnvVariable("DISCORD_BOT_TOKEN")
+	if err != nil {
+		return nil, err
 	}
 
-	openAiToken := os.Getenv("OPENAI_API_KEY")
-	if openAiToken == "" {
-		return nil, errors.New("OPENAI_API_KEY not set")
+	openAiToken, err := getEnvVariable("OPENAI_API_KEY")
+	if err != nil {
+		return nil, err
+	}
+
+	production := false
+	productionEnv := os.Getenv("PRODUCTION")
+	if productionEnv == "true" {
+		production = true
 	}
 
 	return &Configuration{
 		DiscordToken: discordToken,
 		OpenAiToken:  openAiToken,
+		Production:   production,
 	}, nil
+}
+
+func getEnvVariable(key string) (string, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return "", fmt.Errorf("%s not set", key)
+	}
+	return value, nil
 }
