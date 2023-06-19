@@ -1,17 +1,18 @@
 # BrainyBuddy Discord Bot
 
-BrainyBuddy is a Discord bot that uses machine learning models to interact with users. It's capable of understanding and answering questions by integrating with the OpenAI GPT-3.5 Turbo model. The bot filters messages, identifying if a message is a question. Only questions are processed and passed on to the OpenAI GPT-3.5 Turbo API for generating an intelligent response.
+BrainyBuddy is a Discord bot that uses machine learning models to interact with users. It's capable of understanding and answering questions by integrating with the OpenAI GPT-3.5 Turbo model. 
+(testVersion branch) The bot filters messages, identifying if a message is a question. Only questions are processed and passed on to the OpenAI GPT-3.5 Turbo API for generating an intelligent response.
 
 ## Components
 The bot primarily consists of two major components:
 
-- **Gradient Boosting Question Classifier**: This is a Gradient Boosting model trained to identify if an input is a question. It's implemented in Python and hosted locally via Flask as an API endpoint. The model is trained on a balanced dataset, ensuring reliable identification of question and non-question input.
+- (testVersion branch) **Gradient Boosting Question Classifier**: This is a Gradient Boosting model trained to identify if an input is a question. It's implemented in Python and hosted locally via Flask as an API endpoint. The model is trained on a balanced dataset, ensuring reliable identification of question and non-question input.
 + **Discord Interaction and OpenAI Integration**: This part is implemented in Go and includes the logic for interacting with the Discord API, forwarding user messages to the Question Classifier API, and managing responses from OpenAI's GPT-3.5 Turbo API.s
 
 ## Features
 
-- The bot uses gradient-boosting based machine learning model to identify questions in the chat.
-* Non-question sentences are ignored, reducing unnecessary API calls.
+- (testVersion branch) The bot uses gradient-boosting based machine learning model to identify questions in the chat.
+* (testVersion branch) Non-question sentences are ignored, reducing unnecessary API calls.
 + The bot utilizes the OpenAI GPT-3.5 Turbo API to generate meaningful responses to the questions.
 - Efficient handling of API calls using worker queues and backoff strategy.
 
@@ -25,10 +26,10 @@ Follow these steps to setup the BrainyBuddy Discord bot:
 	git clone https://github.com/user/brainybuddy-discord-bot.git
 	cd brainybuddy-discord-bot
  ```
-2. If you want to generate ML objects by yourself, run the classifier script in the repository. Alternatively, you can download already generated ML files from the following location:
+2. (testVersion branch)  If you want to generate ML objects by yourself, run the classifier script in the repository. Alternatively, you can download already generated ML files from the following location:
 [ML Files Download Link](https://drive.google.com/drive/folders/1EWQeVj_qaam3_-SXvbC9T4gHqHoafFNY?usp=sharing)
 
-3. Once downloaded, place the 'Data' folder in this location: 'BrainyBuddyGo/QuestionHandler/'.
+3. (testVersion branch) Once downloaded, place the 'Data' folder in this location: 'BrainyBuddyGo/QuestionHandler/'.
 
 4. Update the prompt.txt file with your desired content. This will be used as the prompt for the GPT API assistant.
 
@@ -39,7 +40,7 @@ export OPENAI_API_KEY=your-openai-api-key
 ```
 <sub>Replace discord-bot-token and openai-api-key with your actual Discord bot token and OpenAI API key, respectively.<sub>
 
-6. Start the Flask server hosting the Gradient Boosting model locally. Make sure you have the necessary Python libraries installed (Flask, pandas, sklearn, joblib, etc.). You may want to use a virtual environment.
+6. (testVersion branch) Start the Flask server hosting the Gradient Boosting model locally. Make sure you have the necessary Python libraries installed (Flask, pandas, sklearn, joblib, etc.). You may want to use a virtual environment.
 ```
 python3 BrainyBuddyGo/QuestionHandler/IsQuestionHandler.py
 ```
