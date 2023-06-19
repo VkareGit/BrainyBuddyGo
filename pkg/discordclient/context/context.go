@@ -4,7 +4,6 @@ import (
 	"errors"
 	"log"
 
-	isQuestionContext "BrainyBuddyGo/pkg/apiclient/context"
 	handler "BrainyBuddyGo/pkg/discordclient/handler"
 	aiContext "BrainyBuddyGo/pkg/openaiclient/context"
 
@@ -12,10 +11,9 @@ import (
 )
 
 type DiscordContext struct {
-	Session           *discordgo.Session
-	Handler           *handler.Handler
-	AIContext         *aiContext.OpenAiContext
-	ISQuestionContext *isQuestionContext.IsQuestionContext
+	Session   *discordgo.Session
+	Handler   *handler.Handler
+	AIContext *aiContext.OpenAiContext
 }
 
 func (dc *DiscordContext) RegisterHandlers() {
@@ -23,24 +21,24 @@ func (dc *DiscordContext) RegisterHandlers() {
 	dc.Session.AddHandler(dc.Handler.MessageCreateHandler)
 }
 
-func Initialize(discordToken string, aiContext *aiContext.OpenAiContext, isQuestionContext *isQuestionContext.IsQuestionContext) (*DiscordContext, error) {
+func Initialize(discordToken string, aiContext *aiContext.OpenAiContext) (*DiscordContext, error) {
 	if discordToken == "" {
-		return nil, errors.New("Discord token is empty")
+		return nil, errors.New("discord token is empty")
 	}
-
-	handler := handler.NewHandler(aiContext, isQuestionContext)
 
 	dg, err := discordgo.New("Bot " + discordToken)
 	if err != nil {
-		log.Printf("Error creating Discord session: %v", err)
+		err = errors.New("Error creating Discord session: " + err.Error())
+		log.Println(err)
 		return nil, err
 	}
 
+	handler := handler.NewHandler(aiContext)
+
 	dc := &DiscordContext{
-		Session:           dg,
-		Handler:           handler,
-		AIContext:         aiContext,
-		ISQuestionContext: isQuestionContext,
+		Session:   dg,
+		Handler:   handler,
+		AIContext: aiContext,
 	}
 
 	dc.RegisterHandlers()
@@ -48,9 +46,16 @@ func Initialize(discordToken string, aiContext *aiContext.OpenAiContext, isQuest
 	return dc, nil
 }
 
-func (dc *DiscordContext) OpenConnection() error {
+func (dc *DiscordContext) checkSessionInitialized() error {
 	if dc.Session == nil {
-		return errors.New("Session is not initialized")
+		return errors.New("session is not initialized")
+	}
+	return nil
+}
+
+func (dc *DiscordContext) OpenConnection() error {
+	if err := dc.checkSessionInitialized(); err != nil {
+		return err
 	}
 
 	if err := dc.Session.Open(); err != nil {
@@ -62,8 +67,8 @@ func (dc *DiscordContext) OpenConnection() error {
 }
 
 func (dc *DiscordContext) CloseConnection() error {
-	if dc.Session == nil {
-		return errors.New("Session is not initialized")
+	if err := dc.checkSessionInitialized(); err != nil {
+		return err
 	}
 
 	if err := dc.Session.Close(); err != nil {

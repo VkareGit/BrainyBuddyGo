@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"os"
+	"path/filepath"
 
 	"github.com/joho/godotenv"
 )
@@ -12,8 +13,9 @@ type Configuration struct {
 	OpenAiToken  string
 }
 
-func Load() (*Configuration, error) {
-	err := godotenv.Load()
+func Load(basepath string) (*Configuration, error) {
+	err := godotenv.Load(filepath.Join(basepath, ".env"))
+
 	if err != nil {
 		return nil, errors.New("Error loading .env file: " + err.Error())
 	}

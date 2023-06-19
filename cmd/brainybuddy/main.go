@@ -1,79 +1,83 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"syscall"
 
 	config "BrainyBuddyGo/Config"
-	isQuestionContext "BrainyBuddyGo/pkg/apiclient/context"
-	DiscordContext_ "BrainyBuddyGo/pkg/discordclient/context"
-	OpenAiConext_ "BrainyBuddyGo/pkg/openaiclient/context"
+	discordContext "BrainyBuddyGo/pkg/discordclient/context"
+	openAiContext "BrainyBuddyGo/pkg/openaiclient/context"
 )
 
 const (
-	OpenAiThreadsNumber     = 5
-	IsQuestionThreadsNumber = 5
+	OpenAiThreadsNumber = 5
 )
 
 type Bot struct {
-	discordContext    *DiscordContext_.DiscordContext
-	openAiContext     *OpenAiConext_.OpenAiContext
-	ISQuestionContext *isQuestionContext.IsQuestionContext
+	discordCtx *discordContext.DiscordContext
+	openAiCtx  *openAiContext.OpenAiContext
 }
 
-func NewBot(cfg *config.Configuration) (*Bot, error) {
-	oa, err := OpenAiConext_.Initialize(cfg.OpenAiToken, OpenAiThreadsNumber)
+func NewBot(cfg *config.Configuration, basepath string) (*Bot, error) {
+	oa, err := openAiContext.NewOpenAiContext(cfg.OpenAiToken, OpenAiThreadsNumber, basepath)
 	if err != nil {
-		log.Printf("Failed to initialize OpenAi context: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to initialize OpenAi context: %w", err)
 	}
 
-	isq, err := isQuestionContext.Initialize(IsQuestionThreadsNumber)
+	dc, err := discordContext.Initialize(cfg.DiscordToken, oa)
 	if err != nil {
-		log.Printf("Failed to initialize OpenAi context: %v", err)
-		return nil, err
-	}
-
-	dc, err := DiscordContext_.Initialize(cfg.DiscordToken, oa, isq)
-	if err != nil {
-		log.Printf("Failed to initialize Discord context: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to initialize Discord context: %w", err)
 	}
 
 	if err := dc.OpenConnection(); err != nil {
-		log.Printf("Failed to open connection: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to open connection: %w", err)
 	}
 
 	return &Bot{
-		discordContext: dc,
-		openAiContext:  oa,
+		discordCtx: dc,
+		openAiCtx:  oa,
 	}, nil
 }
 
 func (b *Bot) Close() error {
-	return b.discordContext.CloseConnection()
+	err := b.discordCtx.CloseConnection()
+	if err != nil {
+		return fmt.Errorf("failed to close Discord context connection: %w", err)
+	}
+
+	b.openAiCtx.Close()
+	log.Println("OpenAI context closed successfully")
+
+	return nil
 }
 
 func main() {
-	cfg, err := config.Load()
+	_, filename, _, _ := runtime.Caller(0)
+	basepath := filepath.Dir(filepath.Dir(filepath.Dir(filename)))
+
+	cfg, err := config.Load(basepath)
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	b, err := NewBot(cfg)
+	b, err := NewBot(cfg, basepath)
 	if err != nil {
 		log.Fatalf("Failed to initialize bot: %v", err)
 	}
+
+	defer func() {
+		if err := b.Close(); err != nil {
+			log.Fatalf("Failed to close connection: %v", err)
+		}
+	}()
 
 	// Wait for a termination signal while the bot is running
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
-
-	if err := b.Close(); err != nil {
-		log.Fatalf("Failed to close connection: %v", err)
-	}
 }
