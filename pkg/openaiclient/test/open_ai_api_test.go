@@ -37,6 +37,15 @@ func getOpenAiToken() (string, error) {
 	return openAiToken, nil
 }
 
+func isProduciton() (bool, error) {
+	production := false
+	productionEnv := os.Getenv("PRODUCTION")
+	if productionEnv == "true" {
+		production = true
+	}
+	return production, nil
+}
+
 func getOpenAiContext() (*contextpkg.OpenAiContext, error) {
 	basepath := setBasepath()
 	loadEnvFile(basepath)
@@ -45,9 +54,14 @@ func getOpenAiContext() (*contextpkg.OpenAiContext, error) {
 		return nil, err
 	}
 
+	isProduciton, err := isProduciton()
+	if err != nil {
+		return nil, err
+	}
+
 	apiKey := openAiToken
 	workers := 1
-	ctx, err := contextpkg.NewOpenAiContext(apiKey, workers, basepath)
+	ctx, err := contextpkg.NewOpenAiContext(apiKey, workers, basepath, isProduciton)
 	if err != nil {
 		return nil, err
 	}
