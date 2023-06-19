@@ -4,7 +4,7 @@ import (
 	"errors"
 	"log"
 
-	handler "BrainyBuddyGo/pkg/discordclient/handler"
+	"BrainyBuddyGo/pkg/discordclient/handler"
 	aiContext "BrainyBuddyGo/pkg/openaiclient/context"
 
 	"github.com/bwmarrin/discordgo"
@@ -21,7 +21,7 @@ func (dc *DiscordContext) RegisterHandlers() {
 	dc.Session.AddHandler(dc.Handler.MessageCreateHandler)
 }
 
-func Initialize(discordToken string, aiContext *aiContext.OpenAiContext) (*DiscordContext, error) {
+func Initialize(discordToken string, aiContext *aiContext.OpenAiContext, limiter handler.MessageLimiter) (*DiscordContext, error) {
 	if discordToken == "" {
 		return nil, errors.New("discord token is empty")
 	}
@@ -33,7 +33,7 @@ func Initialize(discordToken string, aiContext *aiContext.OpenAiContext) (*Disco
 		return nil, err
 	}
 
-	handler := handler.NewHandler(aiContext)
+	handler := handler.NewHandler(aiContext, limiter)
 
 	dc := &DiscordContext{
 		Session:   dg,
