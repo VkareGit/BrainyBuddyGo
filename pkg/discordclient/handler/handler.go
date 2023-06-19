@@ -75,7 +75,7 @@ func (h *Handler) MessageCreateHandler(s *discordgo.Session, m *discordgo.Messag
 
 func (h *Handler) GenerateAIResponse(question string, authorUsername string) (string, error) {
 	if h.AIContext == nil {
-		return UnableToAssistMsg, fmt.Errorf(aiContext.ErrUninitOpenAI)
+		return UnableToAssistMsg, fmt.Errorf(aiContext.ErrUninitOpenAI.Error())
 	}
 
 	flagged, err := h.AIContext.ModerationCheck(question, ModerateQuestionMaxRetries)

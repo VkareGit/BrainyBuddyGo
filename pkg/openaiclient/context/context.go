@@ -11,77 +11,97 @@ import (
 	"sync"
 	"time"
 
-	backoff "github.com/cenkalti/backoff/v4"
+	"github.com/cenkalti/backoff/v4"
 	"github.com/chrisport/go-lang-detector/langdet"
 	"github.com/chrisport/go-lang-detector/langdet/langdetdef"
-	openai "github.com/sashabaranov/go-openai"
+	"github.com/sashabaranov/go-openai"
 )
 
 const (
-	DefaultMaxTokens   = 200
-	DefaultN           = 1
-	DefaultTemperature = 0.8
-	maxRetries         = 3
-	cacheLifeTime      = 24 * time.Hour
-	N                  = 4
-	DefaultPromptFile  = "pkg/openaiclient/context/config/prompt.txt"
-	GenerateResponse   = "Generating AI response for question: '%s', asked by user: '%s'"
-	// Error messages
-	ErrEmptyAPIKey        = "OpenAi API Key is empty"
-	ErrFailedPromptPath   = "failed to get absolute path for prompt file: %w"
-	ErrFailedPromptRead   = "failed to read prompt file: %w"
-	ErrEmptyInput         = "input is empty"
-	ErrUninitOpenAI       = "OpenAI client is not initialized"
-	ErrFailedChatComplete = "Failed to create chat completion: "
-	ErrNoChoicesResponse  = "no choices in response"
-	ErrNonEnglishInput    = "input is not in English"
-	ErrFailedModeration   = "failed to moderate text: "
-	ErrNoModResults       = "no choices were returned in the moderation response"
-	ErrMaxRetries         = "failed to moderate text after maximum retries"
+	DefaultMaxTokens      = 200
+	DefaultN              = 1
+	DefaultTemperature    = 0.8
+	maxRetries            = 3
+	cacheLifeTime         = 24 * time.Hour
+	ConversationCacheSize = 2
+	DefaultPromptFile     = "pkg/openaiclient/context/config/prompt.txt"
+	GenerateResponse      = "Generating AI response for question: '%s', asked by user: '%s'"
+)
+
+var (
+	ErrEmptyAPIKey        = errors.New("OpenAi API Key is empty")
+	ErrUninitOpenAI       = errors.New("OpenAI client is not initialized")
+	ErrFailedChatComplete = errors.New("failed to create chat completion")
+	ErrNoChoicesResponse  = errors.New("no choices in response")
+	ErrNonEnglishInput    = errors.New("input is not in English")
+	ErrFailedModeration   = errors.New("failed to moderate text")
+	ErrNoModResults       = errors.New("no choices were returned in the moderation response")
+	ErrMaxRetries         = errors.New("failed to moderate text after maximum retries")
+	ErrEmptyInput         = errors.New("input is empty")
 )
 
 type CacheItem struct {
 	Conversation []openai.ChatCompletionMessage
 	Timestamp    time.Time
+	IsFinished   bool
+}
+
+type UserCacheItem struct {
+	Conversations []CacheItem
+}
+type OpenAiContextConfig struct {
+	APIKey                string
+	Workers               int
+	CacheLifeTime         time.Duration
+	ConversationCacheSize int
+	DefaultMaxTokens      int
+	DefaultN              int
+	DefaultTemperature    float64
+	MaxRetries            int
+	DefaultPromptFile     string
 }
 
 type OpenAiContext struct {
-	APIKey  string
-	Prompt  string
-	Client  *openai.Client
-	workers int
-	sem     chan struct{}
-
-	generationCache map[string]CacheItem
-
-	generationCacheMu sync.RWMutex
-
-	cacheLifeTime time.Duration
+	Client          *openai.Client
+	Config          *OpenAiContextConfig
+	sem             chan struct{}
+	generationCache sync.Map
 }
 
-func NewOpenAiContext(apiKey string, workers int) (*OpenAiContext, error) {
+func NewOpenAiContext(apiKey string, workers int, basepath string) (*OpenAiContext, error) {
 	if apiKey == "" {
-		return nil, fmt.Errorf(ErrEmptyAPIKey)
+		return nil, ErrEmptyAPIKey
 	}
 
-	prompt, err := getPrompt()
+	client := openai.NewClient(apiKey)
+
+	prompt, err := getPrompt(basepath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get prompt: %w", err)
 	}
 
-	client := &OpenAiContext{
-		APIKey:          apiKey,
-		Prompt:          prompt,
-		Client:          openai.NewClient(apiKey),
-		workers:         getWorkerCount(workers),
-		sem:             make(chan struct{}, workers),
-		cacheLifeTime:   cacheLifeTime,
-		generationCache: make(map[string]CacheItem),
+	config := &OpenAiContextConfig{
+		APIKey:                apiKey,
+		Workers:               workers,
+		CacheLifeTime:         cacheLifeTime,
+		ConversationCacheSize: ConversationCacheSize,
+		DefaultMaxTokens:      DefaultMaxTokens,
+		DefaultN:              DefaultN,
+		DefaultTemperature:    DefaultTemperature,
+		MaxRetries:            maxRetries,
+		DefaultPromptFile:     prompt,
 	}
 
-	go client.RunCacheEviction()
+	ctx := &OpenAiContext{
+		Client:          client,
+		Config:          config,
+		sem:             make(chan struct{}, getWorkerCount(workers)),
+		generationCache: sync.Map{},
+	}
 
-	return client, nil
+	go ctx.RunCacheEviction()
+
+	return ctx, nil
 }
 
 func getWorkerCount(workers int) int {
@@ -91,55 +111,64 @@ func getWorkerCount(workers int) int {
 	return workers
 }
 
-func getPrompt() (string, error) {
-	promptPath, err := filepath.Abs(DefaultPromptFile)
-	if err != nil {
-		return "", fmt.Errorf(ErrFailedPromptPath, err)
-	}
+func getPrompt(basepath string) (string, error) {
+	filepath := filepath.Join(basepath, DefaultPromptFile)
 
-	prompt, err := ioutil.ReadFile(promptPath)
+	prompt, err := ioutil.ReadFile(filepath)
 	if err != nil {
-		return "", fmt.Errorf(ErrFailedPromptRead, err)
+		return "", fmt.Errorf("failed to read prompt file: %w", err)
 	}
 
 	return string(prompt), nil
 }
 
+func (client *OpenAiContext) AddItemToCache(key interface{}, value UserCacheItem) {
+	client.generationCache.Store(key, value)
+}
+
+func (client *OpenAiContext) DeleteItemFromCache(key interface{}) {
+	client.generationCache.Delete(key)
+}
+
+func (client *OpenAiContext) CacheContains(key interface{}) (value interface{}, ok bool) {
+	value, ok = client.generationCache.Load(key)
+	return value, ok
+}
+
 func (client *OpenAiContext) GenerateResponse(input string, authorUsername string) (string, error) {
 	log.Printf(GenerateResponse, input, authorUsername)
 	if client.Client == nil {
-		return "", fmt.Errorf(ErrUninitOpenAI)
+		return "", fmt.Errorf(ErrUninitOpenAI.Error())
+	}
+
+	if authorUsername == "" {
+		return "", errors.New("author username cannot be empty")
+	}
+
+	if strings.Contains(authorUsername, " ") {
+		return "", errors.New("author username cannot contain spaces")
 	}
 
 	if strings.TrimSpace(input) == "" {
-		return "", fmt.Errorf(ErrEmptyInput)
+		return "", fmt.Errorf(ErrEmptyInput.Error())
 	}
 
 	cacheKey := authorUsername
-	client.generationCacheMu.RLock()
-	cacheItem, ok := client.generationCache[cacheKey]
-	client.generationCacheMu.RUnlock()
+	cacheValue, ok := client.CacheContains(cacheKey)
+	userCacheItem, _ := cacheValue.(UserCacheItem)
 
+	systemMessage := fmt.Sprintf("[PROMPT]%s[/PROMPT] Conversation with: %s[CONVERSATION]", client.Config.DefaultPromptFile, authorUsername)
 	var conversation []openai.ChatCompletionMessage
+	isNewConversation := false
 
-	systemMessage := fmt.Sprintf(client.Prompt, authorUsername)
-	systemMessageExists := false
-
-	if ok {
-		conversation = append(conversation, cacheItem.Conversation...)
-		for _, message := range cacheItem.Conversation {
-			if message.Role == openai.ChatMessageRoleAssistant && message.Content == systemMessage {
-				systemMessageExists = true
-				break
-			}
-		}
-	}
-
-	if !systemMessageExists {
+	if !ok || len(userCacheItem.Conversations) == 0 || userCacheItem.Conversations[len(userCacheItem.Conversations)-1].IsFinished {
 		conversation = append(conversation, openai.ChatCompletionMessage{
 			Role:    openai.ChatMessageRoleAssistant,
 			Content: systemMessage,
 		})
+		isNewConversation = true
+	} else {
+		conversation = userCacheItem.Conversations[len(userCacheItem.Conversations)-1].Conversation
 	}
 
 	conversation = append(conversation, openai.ChatCompletionMessage{
@@ -147,16 +176,11 @@ func (client *OpenAiContext) GenerateResponse(input string, authorUsername strin
 		Content: input,
 	})
 
-	if len(conversation) > N {
-		conversation = conversation[len(conversation)-N:]
-	}
-
 	ctx := context.Background()
 
 	req := client.createChatCompletionRequest(conversation)
 
-	response, err := client.performChatCompletion(ctx, req)
-
+	response, isFinished, err := client.performChatCompletion(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -166,19 +190,28 @@ func (client *OpenAiContext) GenerateResponse(input string, authorUsername strin
 		Content: response,
 	})
 
-	client.generationCacheMu.Lock()
-	client.generationCache[cacheKey] = CacheItem{
-		Conversation: conversation,
-		Timestamp:    time.Now(),
+	if isNewConversation {
+		userCacheItem.Conversations = append(userCacheItem.Conversations, CacheItem{
+			Conversation: conversation,
+			Timestamp:    time.Now(),
+			IsFinished:   isFinished,
+		})
+		if len(userCacheItem.Conversations) > ConversationCacheSize {
+			userCacheItem.Conversations = userCacheItem.Conversations[1:]
+		}
+	} else {
+		userCacheItem.Conversations[len(userCacheItem.Conversations)-1].Conversation = conversation
+		userCacheItem.Conversations[len(userCacheItem.Conversations)-1].IsFinished = isFinished
 	}
-	client.generationCacheMu.Unlock()
+
+	client.AddItemToCache(cacheKey, userCacheItem)
 
 	return response, nil
 }
 
 func (client *OpenAiContext) createChatCompletionRequest(conversation []openai.ChatCompletionMessage) openai.ChatCompletionRequest {
 	return openai.ChatCompletionRequest{
-		Model:       openai.GPT3Dot5Turbo16K,
+		Model:       openai.GPT3Dot5Turbo,
 		Messages:    conversation,
 		MaxTokens:   DefaultMaxTokens,
 		N:           DefaultN,
@@ -208,7 +241,7 @@ func retryWithBackoff(performFunc func() (interface{}, error), maxRetries int) (
 	}
 }
 
-func (client *OpenAiContext) performChatCompletion(ctx context.Context, req openai.ChatCompletionRequest) (string, error) {
+func (client *OpenAiContext) performChatCompletion(ctx context.Context, req openai.ChatCompletionRequest) (string, bool, error) {
 	var allResponses strings.Builder
 
 	for {
@@ -218,16 +251,16 @@ func (client *OpenAiContext) performChatCompletion(ctx context.Context, req open
 			return client.Client.CreateChatCompletion(ctx, req)
 		}, maxRetries)
 		if err != nil {
-			return "", fmt.Errorf("%s %v", ErrFailedChatComplete, err)
+			return "", false, fmt.Errorf("%s %v", ErrFailedChatComplete, err)
 		}
 
 		response, ok := respInterface.(openai.ChatCompletionResponse)
 		if !ok {
-			return "", errors.New("failed to cast to openai.ChatCompletionResponse")
+			return "", false, errors.New("failed to cast to openai.ChatCompletionResponse")
 		}
 
 		if len(response.Choices) == 0 {
-			return "", fmt.Errorf(ErrNoChoicesResponse)
+			return "", false, fmt.Errorf(ErrNoChoicesResponse.Error())
 		}
 
 		responseText := response.Choices[0].Message.Content
@@ -236,15 +269,9 @@ func (client *OpenAiContext) performChatCompletion(ctx context.Context, req open
 		allResponses.WriteString(responseText)
 
 		if finishReason == openai.FinishReasonStop {
-			return allResponses.String(), nil
+			return allResponses.String(), false, nil
 		} else {
-			// Otherwise, generate another response
-			req.Messages = append(req.Messages, openai.ChatCompletionMessage{
-				Role:    openai.ChatMessageRoleAssistant,
-				Content: responseText,
-			})
-
-			continue
+			return allResponses.String(), true, nil
 		}
 	}
 }
@@ -263,11 +290,11 @@ func checkLanguage(input string) error {
 
 func (client *OpenAiContext) ModerationCheck(input string, maxRetries int) (bool, error) {
 	if client.Client == nil {
-		return false, fmt.Errorf(ErrUninitOpenAI)
+		return false, fmt.Errorf(ErrUninitOpenAI.Error())
 	}
 
 	if strings.TrimSpace(input) == "" {
-		return false, fmt.Errorf(ErrEmptyInput)
+		return false, fmt.Errorf(ErrEmptyInput.Error())
 	}
 
 	if err := checkLanguage(input); err != nil {
@@ -300,7 +327,7 @@ func (client *OpenAiContext) performModeration(ctx context.Context, req openai.M
 
 	for {
 		if retryCount >= maxRetries {
-			return false, fmt.Errorf(ErrMaxRetries)
+			return false, fmt.Errorf(ErrMaxRetries.Error())
 		}
 
 		client.sem <- struct{}{}
@@ -317,7 +344,7 @@ func (client *OpenAiContext) performModeration(ctx context.Context, req openai.M
 		}
 
 		if len(resp.Results) == 0 {
-			return false, fmt.Errorf(ErrNoModResults)
+			return false, fmt.Errorf(ErrNoModResults.Error())
 		}
 
 		return resp.Results[0].Flagged, nil
@@ -329,16 +356,30 @@ func (client *OpenAiContext) Close() {
 }
 
 func (client *OpenAiContext) RunCacheEviction() {
-	ticker := time.NewTicker(client.cacheLifeTime)
+	ticker := time.NewTicker(client.Config.CacheLifeTime)
 
 	for {
 		<-ticker.C
-		client.generationCacheMu.Lock()
-		for k, v := range client.generationCache {
-			if time.Since(v.Timestamp) > client.cacheLifeTime {
-				delete(client.generationCache, k)
+		cachedItemsCopy := make(map[interface{}]UserCacheItem)
+
+		client.generationCache.Range(func(k, v interface{}) bool {
+			userCacheItem, _ := v.(UserCacheItem)
+			cachedItemsCopy[k] = userCacheItem
+			return true
+		})
+
+		for key, userCacheItem := range cachedItemsCopy {
+			for i, v := range userCacheItem.Conversations {
+				if time.Since(v.Timestamp) > client.Config.CacheLifeTime {
+					if len(userCacheItem.Conversations) == 1 {
+						client.DeleteItemFromCache(key)
+					} else {
+						userCacheItem.Conversations = append(userCacheItem.Conversations[:i], userCacheItem.Conversations[i+1:]...)
+						client.AddItemToCache(key, userCacheItem)
+					}
+					break
+				}
 			}
 		}
-		client.generationCacheMu.Unlock()
 	}
 }

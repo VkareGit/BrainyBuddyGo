@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"syscall"
 
 	config "BrainyBuddyGo/Config"
@@ -21,8 +23,8 @@ type Bot struct {
 	openAiCtx  *openAiContext.OpenAiContext
 }
 
-func NewBot(cfg *config.Configuration) (*Bot, error) {
-	oa, err := openAiContext.NewOpenAiContext(cfg.OpenAiToken, OpenAiThreadsNumber)
+func NewBot(cfg *config.Configuration, basepath string) (*Bot, error) {
+	oa, err := openAiContext.NewOpenAiContext(cfg.OpenAiToken, OpenAiThreadsNumber, basepath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize OpenAi context: %w", err)
 	}
@@ -55,12 +57,15 @@ func (b *Bot) Close() error {
 }
 
 func main() {
-	cfg, err := config.Load()
+	_, filename, _, _ := runtime.Caller(0)
+	basepath := filepath.Dir(filepath.Dir(filepath.Dir(filename)))
+
+	cfg, err := config.Load(basepath)
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	b, err := NewBot(cfg)
+	b, err := NewBot(cfg, basepath)
 	if err != nil {
 		log.Fatalf("Failed to initialize bot: %v", err)
 	}
