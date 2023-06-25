@@ -3,10 +3,10 @@ package context
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"path/filepath"
 	"strings"
 	"time"
+
+	_ "embed"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/chrisport/go-lang-detector/langdet"
@@ -20,26 +20,19 @@ func getWorkerCount(workers int) int {
 	return workers
 }
 
-func getPrompt(basepath string, production bool) (string, error) {
-	filepath := filepath.Join(basepath, DefaultPromptFile)
-
-	promptBytes, err := ioutil.ReadFile(filepath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read prompt file: %w", err)
-	}
-
+func getPrompt(promptData []byte, production bool) (string, error) {
 	var allPrompts []string
 
 	if !production {
 		var config NormalPromptData
-		err = json.Unmarshal(promptBytes, &config)
+		err := json.Unmarshal(promptData, &config)
 		if err != nil {
 			return "", fmt.Errorf("failed to decode config file: %w", err)
 		}
 		allPrompts = append(allPrompts, strings.Join(config.Welcome, " "))
 	} else {
 		var config map[string]map[string][]string
-		err = json.Unmarshal(promptBytes, &config)
+		err := json.Unmarshal(promptData, &config)
 		if err != nil {
 			return "", fmt.Errorf("failed to decode config file: %w", err)
 		}

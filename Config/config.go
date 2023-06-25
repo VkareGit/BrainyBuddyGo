@@ -1,53 +1,32 @@
 package config
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-
-	"github.com/joho/godotenv"
+	_ "embed"
 )
 
 type Configuration struct {
 	DiscordToken string
 	OpenAiToken  string
 	Production   bool
+	OpenAiPrompt []byte
 }
 
-func Load(basepath string) (*Configuration, error) {
-	err := godotenv.Load(filepath.Join(basepath, ".env"))
+var (
+	//go:embed discord_bot_token.txt
+	discordToken string
 
-	if err != nil {
-		return nil, fmt.Errorf("Error loading .env file: %w", err)
-	}
+	//go:embed open_ai_token.txt
+	openAiToken string
 
-	discordToken, err := getEnvVariable("DISCORD_BOT_TOKEN")
-	if err != nil {
-		return nil, err
-	}
+	//go:embed prompt.json
+	promptData []byte
+)
 
-	openAiToken, err := getEnvVariable("OPENAI_API_KEY")
-	if err != nil {
-		return nil, err
-	}
-
-	production := false
-	productionEnv := os.Getenv("PRODUCTION")
-	if productionEnv == "true" {
-		production = true
-	}
-
+func Load() (*Configuration, error) {
 	return &Configuration{
 		DiscordToken: discordToken,
 		OpenAiToken:  openAiToken,
-		Production:   production,
+		Production:   true,
+		OpenAiPrompt: promptData,
 	}, nil
-}
-
-func getEnvVariable(key string) (string, error) {
-	value := os.Getenv(key)
-	if value == "" {
-		return "", fmt.Errorf("%s not set", key)
-	}
-	return value, nil
 }

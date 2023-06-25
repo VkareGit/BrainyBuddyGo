@@ -14,14 +14,14 @@ type OpenAiContext struct {
 	generationCache sync.Map
 }
 
-func NewOpenAiContext(apiKey string, workers int, basepath string, production bool) (*OpenAiContext, error) {
+func NewOpenAiContext(apiKey string, workers int, promptData []byte, production bool) (*OpenAiContext, error) {
 	if apiKey == "" {
 		return nil, ErrEmptyAPIKey
 	}
 
 	client := openai.NewClient(apiKey)
 
-	prompt, err := getPrompt(basepath, production)
+	prompt, err := getPrompt(promptData, production)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get prompt: %w", err)
 	}

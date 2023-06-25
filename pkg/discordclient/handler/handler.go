@@ -17,6 +17,7 @@ const (
 )
 
 var allowedChannels = []string{
+	"1122558947941945354",
 	"1114708430859550771",
 }
 

@@ -26,5 +26,7 @@ go.work
 .env
 
 QuestionHandler/Data/
+Config/discord_bot_token.txt
+Config/open_ai_token.txt
 
 pkg/openaiclient/context/config/
