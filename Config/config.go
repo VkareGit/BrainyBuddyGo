@@ -7,8 +7,6 @@ import (
 type Configuration struct {
 	DiscordToken string
 	OpenAiToken  string
-	Production   bool
-	OpenAiPrompt []byte
 }
 
 var (
@@ -17,16 +15,11 @@ var (
 
 	//go:embed open_ai_token.txt
 	openAiToken string
-
-	//go:embed prompt.json
-	promptData []byte
 )
 
 func Load() (*Configuration, error) {
 	return &Configuration{
 		DiscordToken: discordToken,
 		OpenAiToken:  openAiToken,
-		Production:   true,
-		OpenAiPrompt: promptData,
 	}, nil
 }
