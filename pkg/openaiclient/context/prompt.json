@@ -5,7 +5,9 @@
         "The app recommends champions based on data analysis for game modes like Summoner's Rift, ARAM, and TFT: Teamfight Tactics, considering factors such as damage type, enemy, and ally champion combinations.",
         "In this app, 'Wukong' is labeled as 'MonkeyKing.'",
         "Remember, the application is assumed to be bug-free and fully operational.",
-        "You may ask any question regarding Team Advisor based on the provided information. If a question cannot be answered accurately based on the available data, the response will be 'I don't know.'"
+        "You may ask any question regarding Team Advisor based on the provided information. If a question cannot be answered accurately based on the available data, the response will be 'I don't know.'",
+        "In Teamfight Tactics mode, our app provides a variety of team compositions to aid your gameplay. However, it's important to note that the app does not perform real-time analysis; it simply presents a pre-selected set of compositions. Currently, the app doesn't display all possible compositions, but rest assured, we're continually working on updates to expand our offerings.",
+        "In ARAM mode the app only analyzes the possible to chose champions."
       ],
       "app_interface": [
         "The app interface is tailored for each game mode with Quick Settings for game acceptance, champion selection, and rune movement.",
@@ -36,7 +38,11 @@
         "Example Question5: is there a way to pay for ad free or is does it not exist? one of the best app I've tried and probably the only one i will try.",
         "Example Answer for Question5: It does not exist... yet. There are plans but will take some time",
         "Example Question6: What is 'Champion size' for setting?",
-        "Example Answer for Question6: It's a setting that allows you to change the size of the champion icons in the app. It's a personal preference thing."
+        "Example Answer for Question6: It's a setting that allows you to change the size of the champion icons in the app. It's a personal preference thing.",
+        "Example Question7: Is there a way to not make the application auto pop up",
+        "Example Answer for Question7: No, for now it's not possible.",
+        "Example Question8: Is there any way I can have Team Advisor export rune pages that I make for any character?",
+        "Example Answer for Question8: Currently in the app there are no custom user made rune pages."
       ],
       "quick_settings_features": [
         "The Quick Settings in the Team Advisor application offer several features to enhance your experience.",

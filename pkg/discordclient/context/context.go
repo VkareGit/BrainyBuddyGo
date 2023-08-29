@@ -23,11 +23,7 @@ var AllowedChannels = []string{
 	"1113239460281335820",
 }
 
-var AdminUsers = []string{
-	"530482157571932184",
-	"246295908545724417",
-	"404772146330599424",
-}
+var AdminUsers = []string{}
 
 type MessageLimiter interface {
 	RegisterMessage(userID string) (bool, time.Duration)

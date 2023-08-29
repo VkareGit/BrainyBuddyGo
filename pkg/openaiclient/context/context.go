@@ -82,7 +82,7 @@ func (c *OpenAiContext) GenerateAnswer(ctx context.Context, input string) (strin
 
 func (c *OpenAiContext) createChatCompletionRequest(messages []openai.ChatCompletionMessage) openai.ChatCompletionRequest {
 	return openai.ChatCompletionRequest{
-		Model:       openai.GPT3Dot5Turbo16K0613,
+		Model:       openai.GPT40613,
 		Messages:    messages,
 		MaxTokens:   DefaultMaxTokens,
 		Temperature: DefaultTemperature,
