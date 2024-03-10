@@ -28,5 +28,6 @@ go.work
 QuestionHandler/Data/
 Config/discord_bot_token.txt
 Config/open_ai_token.txt
+Config/riot_api_key.txt
 
 pkg/openaiclient/context/config/

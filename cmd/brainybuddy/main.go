@@ -12,6 +12,7 @@ import (
 	discordclient "BrainyBuddyGo/pkg/discordclient/context"
 	limiter "BrainyBuddyGo/pkg/discordclient/limiter"
 	openAiContext "BrainyBuddyGo/pkg/openaiclient/context"
+	riotapi "BrainyBuddyGo/pkg/riotclient/context"
 )
 
 const (
@@ -22,6 +23,7 @@ type Bot struct {
 	discordCtx *discordclient.DiscordContext
 	openAiCtx  *openAiContext.OpenAiContext
 	Limiter    *limiter.MessageLimiter
+	riotCtx    *riotapi.RiotContext
 }
 
 func NewBot(ctx context.Context, cfg *config.Configuration) (*Bot, error) {
@@ -32,12 +34,15 @@ func NewBot(ctx context.Context, cfg *config.Configuration) (*Bot, error) {
 
 	lim := limiter.NewMessageLimiter()
 
+	riotCtx := riotapi.NewRiotAPI(cfg.RiotApiKey)
+
 	b := &Bot{
 		openAiCtx: oa,
 		Limiter:   lim,
+		riotCtx:   riotCtx,
 	}
 
-	dc, err := discordclient.NewDiscordContext(ctx, cfg.DiscordToken, oa, lim)
+	dc, err := discordclient.NewDiscordContext(ctx, cfg.DiscordToken, oa, riotCtx, lim)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Discord context: %w", err)
 	}
