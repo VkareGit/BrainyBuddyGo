@@ -82,9 +82,9 @@ func (c *OpenAiContext) GenerateAnswer(ctx context.Context, input string) (strin
 
 	conversation := c.createChatCompletionRequest(messages)
 
-	c.sem <- struct{}{} // Acquire a semaphore slot after all checks
+	c.sem <- struct{}{}
 	defer func() {
-		<-c.sem // Release the semaphore slot
+		<-c.sem
 	}()
 
 	response, err := c.performChatCompletionWithRetries(ctx, conversation, MaxRetryAttempts)

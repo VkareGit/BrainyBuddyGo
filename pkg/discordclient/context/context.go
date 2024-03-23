@@ -5,15 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"time"
-	"unicode"
 
 	openai "BrainyBuddyGo/pkg/openaiclient/context"
 	riotapi "BrainyBuddyGo/pkg/riotclient/context"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -60,6 +57,7 @@ func NewDiscordContext(ctx context.Context, discordToken string, aiContext *open
 
 	dc.Session.AddHandler(dc.ready)
 	dc.Session.AddHandler(dc.messageCreateHandler)
+	dc.Session.AddHandler(dc.interactionCreateHandler)
 
 	return dc, nil
 }
@@ -93,67 +91,15 @@ func isAdmin(userID string) bool {
 	return false
 }
 
-func (dc *DiscordContext) handleStatsRequest(gameName string, tagLine string) string {
-	logrus.Infof("Fetching ranked stats for: %s#%s", gameName, tagLine)
-	account, err := riotapi.GetAccountByRiotID(dc.RiotContext.APIKey, "Europe", gameName, tagLine)
-	if err != nil {
-		logrus.WithError(err).Error("Error retrieving account by Riot ID")
-		return fmt.Sprintf("Error retrieving account: %s", err.Error())
-	}
-	logrus.Infof("Successfully fetched PUUID for %s#%s: %s", gameName, tagLine, account.Puuid)
-
-	response, err := dc.RiotContext.GetPlayerRankedStats(account.Puuid)
-	if err != nil {
-		logrus.WithError(err).Error("Error retrieving ranked stats")
-		return fmt.Sprintf("Error retrieving ranked stats: %s", err.Error())
-	}
-
-	logrus.Infof("Responding to ranked stats request for %s#%s", gameName, tagLine)
-	return response
-}
-
-func (dc *DiscordContext) dispatchResponseActions(response string) string {
-	if strings.Contains(response, "!STATS REQUEST!") {
-		gameName, tagLine := dc.extractSummonerInfo(response)
-		return dc.handleStatsRequest(gameName, tagLine)
-	}
-
-	return response
-}
-
-func (dc *DiscordContext) cleanString(s string) string {
-	return strings.TrimFunc(strings.TrimSpace(s), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
-	})
-}
-
-func (dc *DiscordContext) extractSummonerInfo(response string) (gameName, tagLine string) {
-	startMarker := "!STATS REQUEST! "
-	endMarker := " "
-	startIndex := strings.Index(response, startMarker)
-
-	if startIndex == -1 {
-		return "", ""
-	}
-
-	summonerInfoSegment := response[startIndex+len(startMarker):]
-	endIndex := strings.Index(summonerInfoSegment, endMarker)
-	if endIndex != -1 {
-		summonerInfoSegment = summonerInfoSegment[:endIndex]
-	}
-
-	if strings.Contains(summonerInfoSegment, "#") {
-		parts := strings.SplitN(summonerInfoSegment, "#", 2)
-		if len(parts) == 2 {
-			gameName, tagLine = dc.cleanString(parts[0]), dc.cleanString(parts[1])
-			return gameName, tagLine
-		}
-	}
-	return "", ""
-}
-
 func (dc *DiscordContext) handleNewMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if m.Author.ID == s.State.User.ID || isAdmin(m.Author.ID) || !isAllowedChannel(m.ChannelID) {
+		return
+	}
+
+	if m.Content == "!test" {
+		// Pass the MessageReference of the command message to reply to it
+		reference := &discordgo.MessageReference{MessageID: m.ID, ChannelID: m.ChannelID}
+		dc.sendTestComponents(m.ChannelID, reference, "test", "test")
 		return
 	}
 

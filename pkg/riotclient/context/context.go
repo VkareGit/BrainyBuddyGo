@@ -9,6 +9,7 @@ import (
 
 	"github.com/KnutZuidema/golio"
 	"github.com/KnutZuidema/golio/api"
+	"github.com/KnutZuidema/golio/riot/lol"
 	"github.com/sirupsen/logrus"
 )
 
@@ -24,11 +25,33 @@ type AccountDto struct {
 }
 
 func NewRiotAPI(apiKey string) *RiotContext {
-	client := golio.NewClient(apiKey, golio.WithRegion(api.RegionEuropeNorthEast), golio.WithLogger(logrus.New()))
+	client := golio.NewClient(apiKey, golio.WithRegion(api.RegionEuropeWest), golio.WithLogger(logrus.New()))
 	return &RiotContext{
 		Client: client,
 		APIKey: apiKey,
 	}
+}
+
+func (r *RiotContext) GetMatchListByPUUID(puuid string, start int, end int) ([]*lol.Match, error) {
+	count := end - start
+	matchIDs, err := r.Client.Riot.LoL.Match.List(puuid, start, count)
+	if err != nil {
+		return nil, err
+	}
+
+	var matchList []*lol.Match
+
+	for _, matchID := range matchIDs {
+		matchDetails, err := r.Client.Riot.LoL.Match.Get(matchID)
+		if err != nil {
+			logrus.WithError(err).Error("Failed to get match details")
+			continue
+		}
+
+		matchList = append(matchList, matchDetails)
+	}
+
+	return matchList, nil
 }
 
 func GetAccountByRiotID(apiKey, region, gameName, tagLine string) (*AccountDto, error) {
