@@ -10,18 +10,39 @@ import (
 )
 
 type MatchDetail struct {
-	MatchID      string
-	GameMode     string
-	GameDuration int
-	Participants []ParticipantDetail
+	MatchID            string
+	GameMode           string
+	GameDuration       int
+	Winner             string
+	BlueTeam           TeamDetail
+	RedTeam            TeamDetail
+	GameStartTimestamp int64
 }
 
 type ParticipantDetail struct {
-	ParticipantID int
-	ChampionID    int
-	Item0         int
-	Item1         int
-	Level         int
+	SummonerName     string
+	SummonerTag      string
+	ChampionID       int
+	Kills            int
+	Deaths           int
+	Assists          int
+	CS               int
+	Gold             int
+	DamageDealt      int
+	LargestMultiKill int
+	KDA              float64
+}
+
+type TeamDetail struct {
+	TotalKills   int
+	Participants []ParticipantDetail
+}
+
+func calculateKDA(kills, deaths, assists int) float64 {
+	if deaths == 0 {
+		deaths = 1
+	}
+	return float64(kills+assists) / float64(deaths)
 }
 
 func (dc *DiscordContext) handleHistoryRequest(gameName string, tagLine string, start int, end int) ([]MatchDetail, error) {
@@ -42,21 +63,48 @@ func (dc *DiscordContext) handleHistoryRequest(gameName string, tagLine string, 
 	// Create a list of MatchDetail
 	var matchDetails []MatchDetail
 	for _, match := range matchList {
-		var participantDetails []ParticipantDetail
-		for _, participant := range match.Info.Participants {
-			participantDetails = append(participantDetails, ParticipantDetail{
-				ParticipantID: participant.ParticipantID,
-				ChampionID:    participant.ChampionID,
-				Item0:         participant.Item0,
-				Item1:         participant.Item1,
-				Level:         participant.ChampLevel,
-			})
+		blueTeam := TeamDetail{}
+		redTeam := TeamDetail{}
+
+		winner := "Unknown"
+		if match.Info.Teams[0].Win {
+			winner = "Blue Team"
+		} else if match.Info.Teams[1].Win {
+			winner = "Red Team"
 		}
+
+		for _, participant := range match.Info.Participants {
+			participantDetail := ParticipantDetail{
+				SummonerName:     participant.SummonerName,
+				SummonerTag:      participant.RiotIDTagline,
+				ChampionID:       participant.ChampionID,
+				Kills:            participant.Kills,
+				Deaths:           participant.Deaths,
+				Assists:          participant.Assists,
+				CS:               participant.TotalMinionsKilled,
+				Gold:             participant.GoldEarned,
+				DamageDealt:      participant.TotalDamageDealtToChampions,
+				LargestMultiKill: participant.LargestMultiKill,
+				KDA:              calculateKDA(participant.Kills, participant.Deaths, participant.Assists),
+			}
+
+			if participant.TeamID == 100 {
+				blueTeam.TotalKills += participant.Kills
+				blueTeam.Participants = append(blueTeam.Participants, participantDetail)
+			} else {
+				redTeam.TotalKills += participant.Kills
+				redTeam.Participants = append(redTeam.Participants, participantDetail)
+			}
+		}
+
 		matchDetails = append(matchDetails, MatchDetail{
-			MatchID:      match.Metadata.MatchID,
-			GameMode:     match.Info.GameMode,
-			GameDuration: match.Info.GameDuration,
-			Participants: participantDetails,
+			MatchID:            match.Metadata.MatchID,
+			GameMode:           match.Info.GameMode,
+			GameDuration:       match.Info.GameDuration,
+			Winner:             winner,
+			BlueTeam:           blueTeam,
+			RedTeam:            redTeam,
+			GameStartTimestamp: match.Info.GameStartTimestamp,
 		})
 	}
 

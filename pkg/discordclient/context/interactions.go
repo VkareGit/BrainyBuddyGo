@@ -1,27 +1,47 @@
 package discordclient
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/sirupsen/logrus"
 )
 
-type Participant struct {
-	ParticipantID int
-	ChampionID    int
-}
+func (dc *DiscordContext) formatBasicMatchDetails(matchDetails []MatchDetail, username string, tag string) string {
+	var descriptionBuilder strings.Builder
 
-func (dc *DiscordContext) formatBasicMatchDetails(matchDetails []MatchDetail) string {
-	description := "Select a game for more details:\n"
 	for i, match := range matchDetails {
-		matchDescription := fmt.Sprintf("%d: Match ID: %s, Game Mode: %s, Duration: %d seconds\n", i+1, match.MatchID, match.GameMode, match.GameDuration)
-		description += matchDescription
+		// Get the participant details for the user
+		var participant ParticipantDetail
+		for _, p := range append(match.BlueTeam.Participants, match.RedTeam.Participants...) {
+			if p.SummonerName == username && p.SummonerTag == tag {
+				participant = p
+				break
+			}
+		}
+
+		// Determine the team of the participant
+		teamEmoji := "🔵"
+		if match.Winner == "Red Team" {
+			teamEmoji = "🔴"
+		}
+
+		championName := dc.resolveChampionID(participant.ChampionID)
+
+		fmt.Fprintf(&descriptionBuilder, "%s %d - %s - %s %d/%d/%d - %s\n",
+			teamEmoji, i+1, match.GameMode, championName, participant.Kills, participant.Deaths, participant.Assists, formatDuration(match.GameDuration))
+
+		fmt.Fprintf(&descriptionBuilder, "KDA: %.2f, CS: %d (%.2f), DMG: %d, GOLD: %d\n\n",
+			participant.KDA, participant.CS, float64(participant.CS)/float64(match.GameDuration/60), participant.DamageDealt, participant.Gold)
 	}
-	return description
+
+	return descriptionBuilder.String()
 }
 
 func (dc *DiscordContext) sendTestComponents(channelID string, reference *discordgo.MessageReference, username string, tag string) {
@@ -32,14 +52,14 @@ func (dc *DiscordContext) sendTestComponents(channelID string, reference *discor
 		return
 	}
 
-	description := dc.formatBasicMatchDetails(matchDetails)
+	description := dc.formatBasicMatchDetails(matchDetails, username, tag)
 
-	nextButton := dc.createButton("show_next_button", "Show Next", "➡️", username, tag, start, end)
-	previousButton := dc.createButton("show_previous_button", "Show Previous", "⬅️", username, tag, start, end)
+	nextButton := dc.createButton("show_next_button", "Next", "➡️", username, tag, start, end)
+	previousButton := dc.createButton("show_previous_button", "Previous", "⬅️", username, tag, start, end)
 
 	matchButtons := make([]discordgo.MessageComponent, len(matchDetails))
 	for i := range matchDetails {
-		matchButtons[i] = dc.createButton(fmt.Sprintf("show_match_%d", i), fmt.Sprintf("Details Game %d", i+1), "📜", username, tag, start, end)
+		matchButtons[i] = dc.createButton(fmt.Sprintf("show_match_%d", i), fmt.Sprintf("%d", i+1), "📜", username, tag, start, end)
 	}
 
 	components := []discordgo.MessageComponent{
@@ -207,19 +227,19 @@ func (dc *DiscordContext) handlePageNavigation(s *discordgo.Session, i *discordg
 		logrus.WithError(err).Error("Failed to get history")
 	}
 	title := fmt.Sprintf("History (Page %d)", start/5+1)
-	description := dc.formatBasicMatchDetails(matchDetails)
+	description := dc.formatBasicMatchDetails(matchDetails, username, tag)
 
 	embed := discordgo.MessageEmbed{
 		Title:       title,
 		Description: description,
 	}
 
-	nextButton := dc.createButton("show_next_button", "Show Next", "➡️", username, tag, start, end)
-	previousButton := dc.createButton("show_previous_button", "Show Previous", "⬅️", username, tag, start, end)
+	nextButton := dc.createButton("show_next_button", "Next", "➡️", username, tag, start, end)
+	previousButton := dc.createButton("show_previous_button", "Previous", "⬅️", username, tag, start, end)
 
 	matchButtons := make([]discordgo.MessageComponent, len(matchDetails))
 	for i := range matchDetails {
-		matchButtons[i] = dc.createButton(fmt.Sprintf("show_match_%d", i), fmt.Sprintf("Details Game %d", i+1), "📜", username, tag, start, end)
+		matchButtons[i] = dc.createButton(fmt.Sprintf("show_match_%d", i), fmt.Sprintf("%d", i+1), "📜", username, tag, start, end)
 	}
 
 	components := []discordgo.MessageComponent{
@@ -257,19 +277,19 @@ func (dc *DiscordContext) handlePageHistory(s *discordgo.Session, i *discordgo.I
 	}
 
 	title := fmt.Sprintf("History (Page %d)", start/5+1)
-	description := dc.formatBasicMatchDetails(matchDetails)
+	description := dc.formatBasicMatchDetails(matchDetails, username, tag)
 
 	embed := discordgo.MessageEmbed{
 		Title:       title,
 		Description: description,
 	}
 
-	nextButton := dc.createButton("show_next_button", "Show Next", "➡️", username, tag, start, end)
-	previousButton := dc.createButton("show_previous_button", "Show Previous", "⬅️", username, tag, start, end)
+	nextButton := dc.createButton("show_next_button", "Next", "➡️", username, tag, start, end)
+	previousButton := dc.createButton("show_previous_button", "Previous", "⬅️", username, tag, start, end)
 
 	matchButtons := make([]discordgo.MessageComponent, len(matchDetails))
 	for i := range matchDetails {
-		matchButtons[i] = dc.createButton(fmt.Sprintf("show_match_%d", i), fmt.Sprintf("Details Game %d", i+1), "📜", username, tag, start, end)
+		matchButtons[i] = dc.createButton(fmt.Sprintf("show_match_%d", i), fmt.Sprintf("%d", i+1), "📜", username, tag, start, end)
 	}
 
 	components := []discordgo.MessageComponent{
@@ -307,23 +327,83 @@ func (dc *DiscordContext) handlePageHistory(s *discordgo.Session, i *discordgo.I
 	}
 }
 
+func formatDuration(durationSeconds int) string {
+	minutes := durationSeconds / 60
+	seconds := durationSeconds % 60
+	return fmt.Sprintf("%d:%02d", minutes, seconds)
+}
+
 func (dc *DiscordContext) formatMatchDetails(matchDetails []MatchDetail) string {
-	description := "Here is the history:\n"
+	var descriptionBuilder strings.Builder
 	for _, match := range matchDetails {
-		matchDescription := fmt.Sprintf("Match ID: %s, Game Mode: %s, Game Duration: %d seconds\n", match.MatchID, match.GameMode, match.GameDuration)
-		for _, participant := range match.Participants {
-			participantDescription := fmt.Sprintf("Participant ID: %d, Champion: %d\n", participant.ParticipantID, participant.ChampionID)
-			if len(description)+len(matchDescription)+len(participantDescription) > 2048 {
-				break
-			}
-			matchDescription += participantDescription
+		// Determine the winner
+		winner := "🔵 Blue Team"
+		if match.Winner == "Red Team" {
+			winner = "🔴 Red Team"
 		}
-		if len(description)+len(matchDescription) > 2048 {
-			break
-		}
-		description += matchDescription
+
+		// Constructing each match's description.
+		fmt.Fprintf(&descriptionBuilder, "VICTORY - %s WINS\nType: %s, Score: %d - %d, Time: %s\n",
+			winner, match.GameMode, match.BlueTeam.TotalKills, match.RedTeam.TotalKills,
+			formatDuration(match.GameDuration))
+
+		// Formatting details for each team.
+		dc.formatTeamDetails(&descriptionBuilder, "🔵 Blue Team", match.BlueTeam, match)
+		dc.formatTeamDetails(&descriptionBuilder, "🔴 Red Team", match.RedTeam, match)
+
+		// Append match start timestamp as a readable date string.
+		matchStartTime := time.Unix(match.GameStartTimestamp, 0)
+		fmt.Fprintf(&descriptionBuilder, "%s\n\n",
+			matchStartTime.Format("02/01/2006 15:04"))
 	}
-	return description
+
+	return descriptionBuilder.String()
+}
+
+func (dc *DiscordContext) formatTeamDetails(builder *strings.Builder, teamEmoji string, teamDetail TeamDetail, match MatchDetail) {
+	fmt.Fprintf(builder, "%s\nTotal Kills: %d\n", teamEmoji, teamDetail.TotalKills)
+	for _, participant := range teamDetail.Participants {
+		championName := dc.resolveChampionID(participant.ChampionID)
+		fmt.Fprintf(builder, "%s#%s - %s %d/%d/%d\nKDA: %.2f, CS: %d (%.2f), DMG: %d, GOLD: %d\n",
+			participant.SummonerName, participant.SummonerTag, championName, participant.Kills,
+			participant.Deaths, participant.Assists, participant.KDA, participant.CS,
+			float64(participant.CS)/float64(match.GameDuration/60), participant.DamageDealt, participant.Gold)
+	}
+	builder.WriteString("\n")
+}
+
+type ChampionData struct {
+	ID   int    `json:"id"`
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+
+type ChampionsResponse map[string]ChampionData
+
+func (dc *DiscordContext) resolveChampionID(championID int) string {
+	if name, ok := dc.ChampionData[championID]; ok {
+		return name
+	}
+
+	resp, err := http.Get("https://cdn.merakianalytics.com/riot/lol/resources/latest/en-US/champions.json")
+	if err != nil {
+		fmt.Println("Error fetching champion data:", err)
+		return "Unknown Champion"
+	}
+	defer resp.Body.Close()
+
+	var champions ChampionsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&champions); err != nil {
+		fmt.Println("Error decoding champion data:", err)
+		return "Unknown Champion"
+	}
+
+	dc.ChampionData = make(map[int]string)
+	for _, champion := range champions {
+		dc.ChampionData[champion.ID] = champion.Name
+	}
+
+	return dc.ChampionData[championID]
 }
 
 func (dc *DiscordContext) createButton(action, label, emoji, username, tag string, start, end int) discordgo.Button {

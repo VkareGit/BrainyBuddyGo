@@ -32,10 +32,11 @@ type MessageLimiter interface {
 }
 
 type DiscordContext struct {
-	Session     *discordgo.Session
-	AIContext   *openai.OpenAiContext
-	RiotContext *riotapi.RiotContext
-	Limiter     MessageLimiter
+	Session      *discordgo.Session
+	AIContext    *openai.OpenAiContext
+	RiotContext  *riotapi.RiotContext
+	Limiter      MessageLimiter
+	ChampionData map[int]string
 }
 
 func NewDiscordContext(ctx context.Context, discordToken string, aiContext *openai.OpenAiContext, riotContext *riotapi.RiotContext, limiter MessageLimiter) (*DiscordContext, error) {
@@ -99,7 +100,7 @@ func (dc *DiscordContext) handleNewMessage(s *discordgo.Session, m *discordgo.Me
 	if m.Content == "!test" {
 		// Pass the MessageReference of the command message to reply to it
 		reference := &discordgo.MessageReference{MessageID: m.ID, ChannelID: m.ChannelID}
-		dc.sendTestComponents(m.ChannelID, reference, "test", "test")
+		dc.sendTestComponents(m.ChannelID, reference, "Yiome", "EUW")
 		return
 	}
 
