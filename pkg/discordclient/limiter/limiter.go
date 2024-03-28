@@ -1,6 +1,7 @@
 package limiter
 
 import (
+	"container/list"
 	"sync"
 	"time"
 )
@@ -9,13 +10,13 @@ const MaxMessages = 5
 const LimitDuration = 3 * time.Hour
 
 type MessageLimiter struct {
-	userMessages map[string][]time.Time
-	mutex        sync.Mutex
+	userMessages map[string]*list.List
+	mutex        sync.RWMutex
 }
 
 func NewMessageLimiter() *MessageLimiter {
 	return &MessageLimiter{
-		userMessages: make(map[string][]time.Time),
+		userMessages: make(map[string]*list.List),
 	}
 }
 
@@ -23,28 +24,32 @@ func (m *MessageLimiter) RegisterMessage(userID string) (bool, time.Duration) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	messages, ok := m.userMessages[userID]
 	now := time.Now()
 
-	if ok {
-		startIndex := 0
-		for i, t := range messages {
-			if now.Sub(t).Hours() <= LimitDuration.Hours() {
-				startIndex = i
-				break
-			}
+	// Use a linked list as a queue to store timestamps
+	messages, exists := m.userMessages[userID]
+	if !exists {
+		messages = list.New()
+		m.userMessages[userID] = messages
+	}
+
+	// Remove old timestamps from the front of the queue
+	for messages.Len() > 0 {
+		first := messages.Front()
+		if now.Sub(first.Value.(time.Time)) > LimitDuration {
+			messages.Remove(first)
+		} else {
+			break
 		}
-
-		messages = messages[startIndex:]
 	}
 
-	messages = append(messages, now)
-	m.userMessages[userID] = messages
-
-	if len(messages) > MaxMessages {
-		timeLeft := LimitDuration - now.Sub(messages[0])
-		return false, timeLeft
+	// Check if user can send more messages
+	if messages.Len() < MaxMessages {
+		messages.PushBack(now)
+		return true, 0
+	} else {
+		// If not, calculate how much longer they need to wait
+		first := messages.Front()
+		return false, LimitDuration - now.Sub(first.Value.(time.Time))
 	}
-
-	return true, 0
 }
