@@ -1,18 +1,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"runtime"
 	"syscall"
 
 	config "BrainyBuddyGo/Config"
-	discordContext "BrainyBuddyGo/pkg/discordclient/context"
-	"BrainyBuddyGo/pkg/discordclient/limiter"
+	discordclient "BrainyBuddyGo/pkg/discordclient/context"
+	limiter "BrainyBuddyGo/pkg/discordclient/limiter"
 	openAiContext "BrainyBuddyGo/pkg/openaiclient/context"
+	riotapi "BrainyBuddyGo/pkg/riotclient/context"
 )
 
 const (
@@ -20,25 +20,29 @@ const (
 )
 
 type Bot struct {
-	discordCtx *discordContext.DiscordContext
+	discordCtx *discordclient.DiscordContext
 	openAiCtx  *openAiContext.OpenAiContext
 	Limiter    *limiter.MessageLimiter
+	riotCtx    *riotapi.RiotContext
 }
 
-func NewBot(cfg *config.Configuration, basepath string) (*Bot, error) {
-	oa, err := openAiContext.NewOpenAiContext(cfg.OpenAiToken, OpenAiThreadsNumber, basepath, cfg.Production)
+func NewBot(ctx context.Context, cfg *config.Configuration) (*Bot, error) {
+	oa, err := openAiContext.NewClient(cfg.OpenAiToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize OpenAi context: %w", err)
 	}
 
 	lim := limiter.NewMessageLimiter()
 
+	riotCtx := riotapi.NewRiotAPI(cfg.RiotApiKey)
+
 	b := &Bot{
 		openAiCtx: oa,
 		Limiter:   lim,
+		riotCtx:   riotCtx,
 	}
 
-	dc, err := discordContext.Initialize(cfg.DiscordToken, oa, lim)
+	dc, err := discordclient.NewDiscordContext(ctx, cfg.DiscordToken, oa, riotCtx, lim)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Discord context: %w", err)
 	}
@@ -51,34 +55,32 @@ func NewBot(cfg *config.Configuration, basepath string) (*Bot, error) {
 	return b, nil
 }
 
-func (b *Bot) Close() error {
+func (b *Bot) Close(ctx context.Context) error {
 	err := b.discordCtx.CloseConnection()
 	if err != nil {
 		return fmt.Errorf("failed to close Discord context connection: %w", err)
 	}
 
-	b.openAiCtx.Close()
-	log.Println("OpenAI context closed successfully")
+	log.Println("Discord context and OpenAI context closed successfully")
 
 	return nil
 }
 
 func main() {
-	_, filename, _, _ := runtime.Caller(0)
-	basepath := filepath.Dir(filepath.Dir(filepath.Dir(filename)))
+	ctx := context.Background()
 
-	cfg, err := config.Load(basepath)
+	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	b, err := NewBot(cfg, basepath)
+	b, err := NewBot(ctx, cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize bot: %v", err)
 	}
 
 	defer func() {
-		if err := b.Close(); err != nil {
+		if err := b.Close(ctx); err != nil {
 			log.Fatalf("Failed to close connection: %v", err)
 		}
 	}()
